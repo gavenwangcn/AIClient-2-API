@@ -50,6 +50,10 @@
             "gemini-cli-oauth",
             "gemini-antigravity"
     ],
+    "GEMINI_OAUTH_CLIENT_ID": null,
+    "GEMINI_OAUTH_CLIENT_SECRET": null,
+    "ANTIGRAVITY_OAUTH_CLIENT_ID": null,
+    "ANTIGRAVITY_OAUTH_CLIENT_SECRET": null,
     "LOG_ENABLED": true,
     "LOG_OUTPUT_MODE": "all",
     "LOG_LEVEL": "info",

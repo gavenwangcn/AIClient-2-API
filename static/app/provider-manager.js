@@ -2478,8 +2478,8 @@ async function executeGenerateAuthUrl(providerType, extraOptions = {}) {
             {
                 saveToConfigs: true,
                 providerDir: providerDir,
-                // 通过 IP 访问时自动使用当前 hostname 作为 OAuth 回调地址
-                callbackHost: extraOptions.callbackHost ?? window.location.hostname,
+                // 仅当用户显式配置时传递 callbackHost。默认 localhost，因 Google OAuth 仅接受已注册的 redirect_uri
+                ...(extraOptions.callbackHost != null && { callbackHost: extraOptions.callbackHost }),
                 ...extraOptions
             }
         );
@@ -2637,8 +2637,8 @@ function showAuthModal(authUrl, authInfo) {
                             </label>
                             <div style="display: flex; align-items: center; gap: 4px;">
                                 <input type="text" class="auth-callback-host-input"
-                                    value="${authInfo.callbackHost || 'localhost'}"
-                                    placeholder="localhost 或服务器 IP"
+                                    value="${authInfo.callbackUrl || authInfo.callbackHost || 'localhost'}"
+                                    placeholder="localhost、IP 或 ngrok 地址(https://xxx.ngrok.io)"
                                     style="flex: 1; padding: 6px 10px; border: 1px solid #fcd34d; border-radius: 4px; font-size: 13px; color: #92400e; background: white;"
                                 />
                                 <button class="regenerate-host-btn" title="${t('common.generate')}" style="background: none; border: 1px solid #d97706; border-radius: 4px; cursor: pointer; color: #d97706; padding: 2px 6px;">
@@ -2647,7 +2647,7 @@ function showAuthModal(authUrl, authInfo) {
                             </div>
                             <p style="margin: 6px 0 0 0; font-size: 0.75rem; color: #b45309;">
                                 <i class="fas fa-info-circle"></i>
-                                <span data-i18n="oauth.modal.callbackHostHint">${t('oauth.modal.callbackHostHint') || '通过 IP 访问时填写服务器 IP，确保 Google 回调能到达本服务'}</span>
+                                <span data-i18n="oauth.modal.callbackHostHint">${t('oauth.modal.callbackHostHint') || '支持 localhost、IP 或 ngrok 完整地址。ngrok: 在服务器运行 ngrok http 8085，将得到的 https 地址填入'}</span>
                             </p>
                         </div>
                         ` : ''}
@@ -2724,13 +2724,20 @@ function showAuthModal(authUrl, authInfo) {
         const portInput = modal.querySelector('.auth-port-input');
         const hostInput = modal.querySelector('.auth-callback-host-input');
         const newPort = portInput ? portInput.value : requiredPort;
-        const newHost = hostInput ? hostInput.value.trim() : authInfo.callbackHost;
+        const newVal = hostInput ? hostInput.value.trim() : (authInfo.callbackUrl || authInfo.callbackHost || 'localhost');
         const portChanged = newPort && newPort !== requiredPort;
-        const hostChanged = hostInput && newHost && newHost !== (authInfo.callbackHost || 'localhost');
+        const prevVal = authInfo.callbackUrl || authInfo.callbackHost || 'localhost';
+        const hostChanged = hostInput && newVal && newVal !== prevVal;
         if (portChanged || hostChanged) {
             modal.remove();
             const options = { ...authInfo, port: newPort };
-            if (hostInput && newHost) options.callbackHost = newHost;
+            if (hostInput && newVal) {
+                if (newVal.startsWith('http://') || newVal.startsWith('https://')) {
+                    options.callbackUrl = newVal;
+                } else {
+                    options.callbackHost = newVal;
+                }
+            }
             delete options.provider;
             delete options.redirectUri;
             delete options.callbackPort;

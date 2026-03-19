@@ -105,6 +105,12 @@ export async function handleUpdateConfig(req, res, currentConfig) {
         if (newConfig.TLS_SIDECAR_PORT !== undefined) currentConfig.TLS_SIDECAR_PORT = newConfig.TLS_SIDECAR_PORT;
         if (newConfig.TLS_SIDECAR_PROXY_URL !== undefined) currentConfig.TLS_SIDECAR_PROXY_URL = newConfig.TLS_SIDECAR_PROXY_URL;
 
+        // 自定义 OAuth 凭据（远程服务器通过 IP 访问时使用）
+        if (newConfig.GEMINI_OAUTH_CLIENT_ID !== undefined) currentConfig.GEMINI_OAUTH_CLIENT_ID = newConfig.GEMINI_OAUTH_CLIENT_ID;
+        if (newConfig.GEMINI_OAUTH_CLIENT_SECRET !== undefined) currentConfig.GEMINI_OAUTH_CLIENT_SECRET = newConfig.GEMINI_OAUTH_CLIENT_SECRET;
+        if (newConfig.ANTIGRAVITY_OAUTH_CLIENT_ID !== undefined) currentConfig.ANTIGRAVITY_OAUTH_CLIENT_ID = newConfig.ANTIGRAVITY_OAUTH_CLIENT_ID;
+        if (newConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET !== undefined) currentConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET = newConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET;
+
         // Log settings
         if (newConfig.LOG_ENABLED !== undefined) currentConfig.LOG_ENABLED = newConfig.LOG_ENABLED;
         if (newConfig.LOG_OUTPUT_MODE !== undefined) currentConfig.LOG_OUTPUT_MODE = newConfig.LOG_OUTPUT_MODE;
@@ -175,7 +181,11 @@ export async function handleUpdateConfig(req, res, currentConfig) {
                 TLS_SIDECAR_ENABLED: currentConfig.TLS_SIDECAR_ENABLED,
                 TLS_SIDECAR_ENABLED_PROVIDERS: currentConfig.TLS_SIDECAR_ENABLED_PROVIDERS,
                 TLS_SIDECAR_PORT: currentConfig.TLS_SIDECAR_PORT,
-                TLS_SIDECAR_PROXY_URL: currentConfig.TLS_SIDECAR_PROXY_URL
+                TLS_SIDECAR_PROXY_URL: currentConfig.TLS_SIDECAR_PROXY_URL,
+                GEMINI_OAUTH_CLIENT_ID: currentConfig.GEMINI_OAUTH_CLIENT_ID,
+                GEMINI_OAUTH_CLIENT_SECRET: currentConfig.GEMINI_OAUTH_CLIENT_SECRET,
+                ANTIGRAVITY_OAUTH_CLIENT_ID: currentConfig.ANTIGRAVITY_OAUTH_CLIENT_ID,
+                ANTIGRAVITY_OAUTH_CLIENT_SECRET: currentConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET
             };
 
             writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf-8');

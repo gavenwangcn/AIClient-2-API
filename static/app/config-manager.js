@@ -235,6 +235,16 @@ async function loadConfiguration() {
                 }
             });
         }
+
+        // 自定义 OAuth 凭据（远程服务器通过 IP 访问时使用）
+        const geminiOAuthClientIdEl = document.getElementById('geminiOAuthClientId');
+        const geminiOAuthClientSecretEl = document.getElementById('geminiOAuthClientSecret');
+        const antigravityOAuthClientIdEl = document.getElementById('antigravityOAuthClientId');
+        const antigravityOAuthClientSecretEl = document.getElementById('antigravityOAuthClientSecret');
+        if (geminiOAuthClientIdEl) geminiOAuthClientIdEl.value = data.GEMINI_OAUTH_CLIENT_ID || '';
+        if (geminiOAuthClientSecretEl) geminiOAuthClientSecretEl.value = data.GEMINI_OAUTH_CLIENT_SECRET || '';
+        if (antigravityOAuthClientIdEl) antigravityOAuthClientIdEl.value = data.ANTIGRAVITY_OAUTH_CLIENT_ID || '';
+        if (antigravityOAuthClientSecretEl) antigravityOAuthClientSecretEl.value = data.ANTIGRAVITY_OAUTH_CLIENT_SECRET || '';
         
     } catch (error) {
         console.error('Failed to load configuration:', error);
@@ -346,6 +356,12 @@ async function saveConfiguration() {
     } else {
         config.TLS_SIDECAR_ENABLED_PROVIDERS = [];
     }
+
+    // 自定义 OAuth 凭据
+    config.GEMINI_OAUTH_CLIENT_ID = document.getElementById('geminiOAuthClientId')?.value?.trim() || null;
+    config.GEMINI_OAUTH_CLIENT_SECRET = document.getElementById('geminiOAuthClientSecret')?.value?.trim() || null;
+    config.ANTIGRAVITY_OAUTH_CLIENT_ID = document.getElementById('antigravityOAuthClientId')?.value?.trim() || null;
+    config.ANTIGRAVITY_OAUTH_CLIENT_SECRET = document.getElementById('antigravityOAuthClientSecret')?.value?.trim() || null;
 
     try {
         await window.apiClient.post('/config', config);

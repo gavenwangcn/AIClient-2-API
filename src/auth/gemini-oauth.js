@@ -264,6 +264,12 @@ async function createOAuthCallbackServer(config, redirectUri, authClient, credPa
  * @param {Object} options - 额外选项
  * @returns {Promise<Object>} 返回授权URL和相关信息
  */
+/** 自定义 OAuth 凭据的 config 键名映射 */
+const CUSTOM_OAUTH_CONFIG_KEYS = {
+    'gemini-cli-oauth': { clientId: 'GEMINI_OAUTH_CLIENT_ID', clientSecret: 'GEMINI_OAUTH_CLIENT_SECRET' },
+    'gemini-antigravity': { clientId: 'ANTIGRAVITY_OAUTH_CLIENT_ID', clientSecret: 'ANTIGRAVITY_OAUTH_CLIENT_SECRET' }
+};
+
 async function handleGoogleOAuth(providerKey, currentConfig, options = {}) {
     const config = OAUTH_PROVIDERS[providerKey];
     if (!config) {
@@ -271,22 +277,36 @@ async function handleGoogleOAuth(providerKey, currentConfig, options = {}) {
     }
     
     const port = parseInt(options.port) || config.port;
-    // 支持通过 options.callbackHost 配置回调主机（如通过 IP 访问时使用服务器 IP）
-    const host = options.callbackHost || 'localhost';
-    const redirectUri = `http://${host}:${port}`;
+    // 支持 options.callbackUrl 完整地址（如 ngrok: https://xxx.ngrok.io）或 options.callbackHost（如 IP/域名）
+    let redirectUri;
+    if (options.callbackUrl && (options.callbackUrl.startsWith('http://') || options.callbackUrl.startsWith('https://'))) {
+        redirectUri = options.callbackUrl.replace(/\/$/, ''); // 去掉末尾斜杠，与 Google 要求一致
+    } else {
+        const host = options.callbackHost || 'localhost';
+        redirectUri = `http://${host}:${port}`;
+    }
+
+    // 优先使用 config 中的自定义 OAuth 凭据（用于自建 Google Cloud 项目，可注册自定义 redirect_uri）
+    const customKeys = CUSTOM_OAUTH_CONFIG_KEYS[providerKey];
+    const clientId = currentConfig?.[customKeys.clientId] || config.clientId;
+    const clientSecret = currentConfig?.[customKeys.clientSecret] || config.clientSecret;
+    const usingCustomOAuth = !!(currentConfig?.[customKeys.clientId] && currentConfig?.[customKeys.clientSecret]);
 
     // 获取代理配置
     const proxyConfig = getGoogleAuthProxyConfig(currentConfig, providerKey);
 
     // 构建 OAuth2Client 选项
     const oauth2Options = {
-        clientId: config.clientId,
-        clientSecret: config.clientSecret,
+        clientId,
+        clientSecret,
     };
 
     if (proxyConfig) {
         oauth2Options.transporterOptions = proxyConfig;
         logger.info(`${config.logPrefix} Using proxy for OAuth token exchange`);
+    }
+    if (usingCustomOAuth) {
+        logger.info(`${config.logPrefix} Using custom OAuth credentials (redirect_uri: ${redirectUri})`);
     }
 
     const authClient = new OAuth2Client(oauth2Options);
@@ -313,7 +333,8 @@ async function handleGoogleOAuth(providerKey, currentConfig, options = {}) {
             provider: providerKey,
             redirectUri: redirectUri,
             port: port,
-            callbackHost: host,
+            callbackHost: options.callbackUrl || (options.callbackHost || 'localhost'),
+            callbackUrl: options.callbackUrl,
             ...options
         }
     };

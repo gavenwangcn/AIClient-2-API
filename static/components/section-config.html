@@ -226,6 +226,31 @@
                     <input type="number" id="loginExpiry" class="form-control" min="60" value="3600">
                     <small class="form-text" data-i18n="config.advanced.loginExpiryNote">管理后台登录后的 Token 有效期，默认 3600 秒 (1小时)</small>
                 </div>
+                <hr>
+                <div class="form-group">
+                    <label data-i18n="config.oauth.customGemini.title">自定义 Gemini/Antigravity OAuth 凭据（远程服务器必填）</label>
+                    <small class="form-text" data-i18n="config.oauth.customGemini.desc">服务部署在远程服务器时需自建 OAuth 客户端。方案一 ngrok：在服务器运行 ngrok http 8085，将得到的 https://xxx.ngrok.io 加入 Google 授权列表，OAuth 弹窗中填入该地址。方案二 SSH 隧道：本地执行 ssh -L 3000:localhost:3000 -L 8085:localhost:8085 用户@服务器IP，浏览器访问 localhost:3000。</small>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="geminiOAuthClientId" data-i18n="config.oauth.geminiClientId">Gemini CLI Client ID</label>
+                        <input type="text" id="geminiOAuthClientId" class="form-control" data-i18n-placeholder="config.oauth.clientIdPlaceholder" placeholder="留空使用内置">
+                    </div>
+                    <div class="form-group">
+                        <label for="geminiOAuthClientSecret" data-i18n="config.oauth.geminiClientSecret">Gemini CLI Client Secret</label>
+                        <input type="password" id="geminiOAuthClientSecret" class="form-control" data-i18n-placeholder="config.oauth.clientSecretPlaceholder" placeholder="留空使用内置">
+                    </div>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="antigravityOAuthClientId" data-i18n="config.oauth.antigravityClientId">Antigravity Client ID</label>
+                        <input type="text" id="antigravityOAuthClientId" class="form-control" data-i18n-placeholder="config.oauth.clientIdPlaceholder" placeholder="留空使用内置">
+                    </div>
+                    <div class="form-group">
+                        <label for="antigravityOAuthClientSecret" data-i18n="config.oauth.antigravityClientSecret">Antigravity Client Secret</label>
+                        <input type="password" id="antigravityOAuthClientSecret" class="form-control" data-i18n-placeholder="config.oauth.clientSecretPlaceholder" placeholder="留空使用内置">
+                    </div>
+                </div>
             </div>
 
 
