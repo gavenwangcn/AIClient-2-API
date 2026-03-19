@@ -2478,6 +2478,8 @@ async function executeGenerateAuthUrl(providerType, extraOptions = {}) {
             {
                 saveToConfigs: true,
                 providerDir: providerDir,
+                // 通过 IP 访问时自动使用当前 hostname 作为 OAuth 回调地址
+                callbackHost: extraOptions.callbackHost ?? window.location.hostname,
                 ...extraOptions
             }
         );
@@ -2627,6 +2629,28 @@ function showAuthModal(authUrl, authInfo) {
                                 </div>`
                             }
                         </div>
+                        ${(authInfo.provider === 'gemini-cli-oauth' || authInfo.provider === 'gemini-antigravity') ? `
+                        <div class="callback-host-section" style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #fcd34d;">
+                            <label style="display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-size: 13px; font-weight: 600; color: #92400e;">
+                                <i class="fas fa-server"></i>
+                                <span data-i18n="oauth.modal.callbackHost">${t('oauth.modal.callbackHost') || '回调地址'}</span>
+                            </label>
+                            <div style="display: flex; align-items: center; gap: 4px;">
+                                <input type="text" class="auth-callback-host-input"
+                                    value="${authInfo.callbackHost || 'localhost'}"
+                                    placeholder="localhost 或服务器 IP"
+                                    style="flex: 1; padding: 6px 10px; border: 1px solid #fcd34d; border-radius: 4px; font-size: 13px; color: #92400e; background: white;"
+                                />
+                                <button class="regenerate-host-btn" title="${t('common.generate')}" style="background: none; border: 1px solid #d97706; border-radius: 4px; cursor: pointer; color: #d97706; padding: 2px 6px;">
+                                    <i class="fas fa-sync-alt"></i>
+                                </button>
+                            </div>
+                            <p style="margin: 6px 0 0 0; font-size: 0.75rem; color: #b45309;">
+                                <i class="fas fa-info-circle"></i>
+                                <span data-i18n="oauth.modal.callbackHostHint">${t('oauth.modal.callbackHostHint') || '通过 IP 访问时填写服务器 IP，确保 Google 回调能到达本服务'}</span>
+                            </p>
+                        </div>
+                        ` : ''}
                         <p style="margin: 8px 0 0 0; font-size: 0.85rem; color: #92400e;" data-i18n="oauth.modal.portNote">${t('oauth.modal.portNote')}</p>
                         ${(authInfo.provider === 'claude-kiro-oauth' && authInfo.authMethod === 'builder-id') ? `
                         <div class="builder-id-url-section" style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #fcd34d;">
@@ -2695,24 +2719,28 @@ function showAuthModal(authUrl, authInfo) {
         });
     });
     
-    // 重新生成按钮事件
+    // 重新生成按钮事件（端口或回调地址变更时）
+    const doRegenerate = async () => {
+        const portInput = modal.querySelector('.auth-port-input');
+        const hostInput = modal.querySelector('.auth-callback-host-input');
+        const newPort = portInput ? portInput.value : requiredPort;
+        const newHost = hostInput ? hostInput.value.trim() : authInfo.callbackHost;
+        const portChanged = newPort && newPort !== requiredPort;
+        const hostChanged = hostInput && newHost && newHost !== (authInfo.callbackHost || 'localhost');
+        if (portChanged || hostChanged) {
+            modal.remove();
+            const options = { ...authInfo, port: newPort };
+            if (hostInput && newHost) options.callbackHost = newHost;
+            delete options.provider;
+            delete options.redirectUri;
+            delete options.callbackPort;
+            await executeGenerateAuthUrl(authInfo.provider, options);
+        }
+    };
     const regenerateBtn = modal.querySelector('.regenerate-port-btn');
-    if (regenerateBtn) {
-        regenerateBtn.onclick = async () => {
-            const newPort = modal.querySelector('.auth-port-input').value;
-            if (newPort && newPort !== requiredPort) {
-                modal.remove();
-                // 构造重新请求的参数
-                const options = { ...authInfo, port: newPort };
-                // 移除不需要传递回后端的字段
-                delete options.provider;
-                delete options.redirectUri;
-                delete options.callbackPort;
-                
-                await executeGenerateAuthUrl(authInfo.provider, options);
-            }
-        };
-    }
+    if (regenerateBtn) regenerateBtn.onclick = doRegenerate;
+    const regenerateHostBtn = modal.querySelector('.regenerate-host-btn');
+    if (regenerateHostBtn) regenerateHostBtn.onclick = doRegenerate;
 
     // Builder ID Start URL 重新生成按钮事件
     const regenerateBuilderIdBtn = modal.querySelector('.regenerate-builder-id-btn');

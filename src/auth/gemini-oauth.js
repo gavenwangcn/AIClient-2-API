@@ -271,7 +271,8 @@ async function handleGoogleOAuth(providerKey, currentConfig, options = {}) {
     }
     
     const port = parseInt(options.port) || config.port;
-    const host = 'localhost';
+    // 支持通过 options.callbackHost 配置回调主机（如通过 IP 访问时使用服务器 IP）
+    const host = options.callbackHost || 'localhost';
     const redirectUri = `http://${host}:${port}`;
 
     // 获取代理配置
@@ -312,6 +313,7 @@ async function handleGoogleOAuth(providerKey, currentConfig, options = {}) {
             provider: providerKey,
             redirectUri: redirectUri,
             port: port,
+            callbackHost: host,
             ...options
         }
     };
