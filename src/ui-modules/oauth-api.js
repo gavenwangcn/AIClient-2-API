@@ -10,7 +10,8 @@ import {
     handleCodexOAuth,
     batchImportCodexTokensStream,
     batchImportKiroRefreshTokensStream,
-    importAwsCredentials
+    importAwsCredentials,
+    handleConsensusOAuth
 } from '../auth/oauth-handlers.js';
 
 /**
@@ -56,6 +57,10 @@ export async function handleGenerateAuthUrl(req, res, currentConfig, providerTyp
         } else if (providerType === 'openai-codex-oauth') {
             // Codex OAuth（OAuth2 + PKCE）
             const result = await handleCodexOAuth(currentConfig, options);
+            authUrl = result.authUrl;
+            authInfo = result.authInfo;
+        } else if (providerType === 'consensus-mcp-oauth') {
+            const result = await handleConsensusOAuth(currentConfig, options);
             authUrl = result.authUrl;
             authInfo = result.authInfo;
         } else {

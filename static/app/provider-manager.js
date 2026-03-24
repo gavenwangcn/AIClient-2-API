@@ -462,7 +462,7 @@ async function openProviderManager(providerType) {
  */
 function generateAuthButton(providerType) {
     // 只为支持OAuth的提供商显示授权按钮
-    const oauthProviders = ['gemini-cli-oauth', 'gemini-antigravity', 'openai-qwen-oauth', 'claude-kiro-oauth', 'openai-iflow', 'openai-codex-oauth'];
+    const oauthProviders = ['gemini-cli-oauth', 'gemini-antigravity', 'openai-qwen-oauth', 'claude-kiro-oauth', 'openai-iflow', 'openai-codex-oauth', 'consensus-mcp-oauth'];
 
     if (!oauthProviders.includes(providerType)) {
         return '';
@@ -2525,7 +2525,8 @@ function getAuthFilePath(provider) {
         'gemini-antigravity': '~/.antigravity/oauth_creds.json',
         'openai-qwen-oauth': '~/.qwen/oauth_creds.json',
         'claude-kiro-oauth': '~/.aws/sso/cache/kiro-auth-token.json',
-        'openai-iflow': '~/.iflow/oauth_creds.json'
+        'openai-iflow': '~/.iflow/oauth_creds.json',
+        'consensus-mcp-oauth': 'configs/consensus/mcporter.json'
     };
     return authFilePaths[provider] || (getCurrentLanguage() === 'en-US' ? 'Unknown Path' : '未知路径');
 }
@@ -2587,6 +2588,22 @@ function showAuthModal(authUrl, authInfo) {
                 </ol>
             </div>
         `;
+    } else if (authInfo.provider === 'consensus-mcp-oauth') {
+        const cfgPath = authInfo.mcporterConfigPath || 'configs/consensus/mcporter.json';
+        instructionsHtml = `
+            <div class="auth-instructions">
+                <h4 data-i18n="oauth.modal.steps">${t('oauth.modal.steps')}</h4>
+                <ol style="margin-top:8px;padding-left:20px;line-height:1.6;">
+                    <li>点击下方「在浏览器中打开」或复制「授权链接」，在浏览器中打开 Consensus 授权页。</li>
+                    <li>登录并同意授权；回调由本机 mcporter 监听 <code>127.0.0.1:端口/callback</code>，请在与运行 mcporter <strong>同一台机器</strong>的浏览器中完成（或通过远程桌面在服务器上打开链接）。</li>
+                    <li>授权成功后，凭据将写入 <code>${cfgPath}</code>（mcporter.json）。</li>
+                    <li>可在「上传配置管理」中查看与管理该配置文件。</li>
+                </ol>
+                <p style="font-size: 12px; color: #6b7280; margin-top: 10px;">
+                    <a href="https://docs.consensus.app/docs/mcp" target="_blank" rel="noopener">Consensus MCP 文档</a>
+                </p>
+            </div>
+        `;
     } else {
         instructionsHtml = `
             <div class="auth-instructions">
@@ -2610,7 +2627,15 @@ function showAuthModal(authUrl, authInfo) {
             <div class="modal-body">
                 <div class="auth-info">
                     <p><strong data-i18n="oauth.modal.provider">${t('oauth.modal.provider')}</strong> ${authInfo.provider}</p>
-                    <div class="port-info-section" style="margin: 12px 0; padding: 12px; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; position: relative;">
+                    ${authInfo.provider === 'consensus-mcp-oauth' ? `
+                    <div class="port-info-section" style="margin: 12px 0; padding: 12px; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px;">
+                        <p style="margin: 0; font-size: 13px; color: #92400e; line-height: 1.55;">
+                            <i class="fas fa-terminal" style="color: #d97706;"></i>
+                            <strong>mcporter OAuth：</strong>调试日志中的授权链接已填入下方。OAuth 回调由 mcporter 绑定本机 <code>127.0.0.1</code> 随机端口，请在<strong>运行 AIClient 与 mcporter 的服务器本机</strong>浏览器中打开（勿仅用无法访问该端口的远程浏览器，除非使用远程桌面）。
+                        </p>
+                    </div>
+                    ` : ''}
+                    <div class="port-info-section" style="${authInfo.provider === 'consensus-mcp-oauth' ? 'display: none;' : 'margin: 12px 0; padding: 12px; background: #fef3c7; border: 1px solid #fcd34d; border-radius: 8px; position: relative;'}">
                         ${(authInfo.provider === 'claude-kiro-oauth' && authInfo.authMethod === 'builder-id') ? `
                         <button class="regenerate-builder-id-btn" title="${t('common.generate')}" style="position: absolute; top: 12px; right: 12px; background: none; border: 1px solid #d97706; border-radius: 4px; cursor: pointer; color: #d97706; padding: 4px 8px;">
                             <i class="fas fa-sync-alt"></i>

@@ -24,4 +24,6 @@ export {
     // iFlow OAuth
     handleIFlowOAuth,
     refreshIFlowTokens,
+    // Consensus MCP
+    handleConsensusOAuth,
 } from './index.js';

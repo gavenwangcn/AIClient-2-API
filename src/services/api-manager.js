@@ -6,6 +6,7 @@ import {
 } from '../utils/common.js';
 import { getProviderPoolManager } from './service-manager.js';
 import logger from '../utils/logger.js';
+import { handleConsensusMcpRoutes } from '../providers/consensus/consensus-mcp-handler.js';
 /**
  * Handle API authentication and routing
  * @param {string} method - The HTTP method
@@ -20,6 +21,8 @@ import logger from '../utils/logger.js';
  */
 export async function handleAPIRequests(method, path, req, res, currentConfig, apiService, providerPoolManager, promptLogFilename) {
 
+    const consensusHandled = await handleConsensusMcpRoutes(method, path, req, res, currentConfig, providerPoolManager);
+    if (consensusHandled) return true;
 
     // Route model list requests
     if (method === 'GET') {

@@ -79,6 +79,17 @@ export const PROVIDER_MAPPINGS = [
         urlKeys: ['CODEX_BASE_URL']
     },
     {
+        // Consensus MCP（mcporter 配置）
+        dirName: 'consensus',
+        patterns: ['configs/consensus/', '/consensus/'],
+        providerType: 'consensus-mcp-oauth',
+        credPathKey: 'CONSENSUS_MCPORTER_CONFIG_PATH',
+        defaultCheckModel: 'consensus-paper-search',
+        displayName: 'Consensus MCP (mcporter)',
+        needsProjectId: false,
+        urlKeys: ['CONSENSUS_MCPORTER_PATH', 'CONSENSUS_MCP_URL', 'CONSENSUS_MCP_SERVER_NAME']
+    },
+    {
         // Grok Reverse 配置
         dirName: 'grok',
         patterns: ['configs/grok/', '/grok/'],
@@ -343,6 +354,11 @@ export async function isValidOAuthCredentials(filePath) {
         
         // 也可能是包含嵌套结构的凭据文件
         if (jsonData.installed || jsonData.web) {
+            return true;
+        }
+
+        // mcporter.json：MCP 服务器与 OAuth 状态
+        if (jsonData.mcpServers && typeof jsonData.mcpServers === 'object') {
             return true;
         }
         

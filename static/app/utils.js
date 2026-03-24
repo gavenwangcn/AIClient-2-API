@@ -44,6 +44,13 @@ function getProviderConfigs(supportedProviders = []) {
             visible: supportedProviders.includes('openai-codex-oauth') 
         },
         { 
+            id: 'consensus-mcp-oauth', 
+            name: 'Consensus MCP', 
+            icon: 'fa-book',
+            defaultPath: 'configs/consensus/',
+            visible: supportedProviders.includes('consensus-mcp-oauth') 
+        },
+        { 
             id: 'openai-qwen-oauth', 
             name: t('dashboard.routing.nodeName.qwen'), 
             icon: 'fa-cloud',
@@ -180,6 +187,10 @@ function getFieldLabel(key) {
         'ANTIGRAVITY_BASE_URL_AUTOPUSH': t('modal.provider.field.autopushBaseUrl'),
         'IFLOW_BASE_URL': t('modal.provider.field.iflowBaseUrl'),
         'CODEX_BASE_URL': t('modal.provider.field.codexBaseUrl'),
+        'CONSENSUS_MCPORTER_CONFIG_PATH': 'mcporter.json 路径',
+        'CONSENSUS_MCPORTER_PATH': 'mcporter 可执行文件路径',
+        'CONSENSUS_MCP_URL': 'Consensus MCP URL',
+        'CONSENSUS_MCP_SERVER_NAME': 'MCP 服务器名称（mcporter）',
         'GROK_BASE_URL': t('modal.provider.field.grokBaseUrl'),
         'FORWARD_API_KEY': 'Forward API Key',
         'FORWARD_BASE_URL': 'Forward Base URL',
@@ -364,6 +375,32 @@ function getProviderTypeFields(providerType) {
                 label: `${t('modal.provider.field.codexBaseUrl')} <span class="optional-tag">${t('config.optional')}</span>`,
                 type: 'text',
                 placeholder: 'https://api.openai.com/v1/codex'
+            }
+        ],
+        'consensus-mcp-oauth': [
+            {
+                id: 'CONSENSUS_MCPORTER_PATH',
+                label: `mcporter 可执行文件路径 <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'text',
+                placeholder: '/usr/bin/mcporter（留空则使用全局配置或 PATH）'
+            },
+            {
+                id: 'CONSENSUS_MCPORTER_CONFIG_PATH',
+                label: 'mcporter.json 路径',
+                type: 'text',
+                placeholder: 'configs/consensus/mcporter.json'
+            },
+            {
+                id: 'CONSENSUS_MCP_URL',
+                label: `MCP URL <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'text',
+                placeholder: 'https://mcp.consensus.app/mcp'
+            },
+            {
+                id: 'CONSENSUS_MCP_SERVER_NAME',
+                label: `mcporter 中的服务器名 <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'text',
+                placeholder: 'consensus'
             }
         ],
         'grok-custom': [

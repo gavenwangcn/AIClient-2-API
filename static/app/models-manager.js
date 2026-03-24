@@ -199,7 +199,8 @@ function getProviderDisplayName(providerType) {
         'openaiResponses-custom': 'OpenAI Responses Custom',
         'openai-qwen-oauth': 'Qwen (OAuth)',
         'openai-iflow': 'iFlow',
-        'openai-codex-oauth': 'OpenAI Codex (OAuth)'
+        'openai-codex-oauth': 'OpenAI Codex (OAuth)',
+        'consensus-mcp-oauth': 'Consensus MCP'
     };
 
     return displayNames[providerType] || providerType;

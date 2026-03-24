@@ -1056,6 +1056,12 @@ function detectProviderFromPath(filePath) {
             shortName: 'codex-oauth'
         },
         {
+            patterns: ['configs/consensus/', '/consensus/'],
+            providerType: 'consensus-mcp-oauth',
+            displayName: 'Consensus MCP',
+            shortName: 'consensus-mcp'
+        },
+        {
             patterns: ['configs/iflow/', '/iflow/'],
             providerType: 'openai-iflow',
             displayName: 'OpenAI iFlow OAuth',

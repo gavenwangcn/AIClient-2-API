@@ -92,6 +92,8 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         TLS_SIDECAR_PROXY_URL: null,   // TLS Sidecar 专用的上游代理地址
         TRACE_LOG_DB_PATH: './logs/aiclient2api-trace.db',
         TRACE_LOG_MAX_DAYS: 30,
+        /** Consensus MCP：mcporter 可执行文件全局默认路径（号池节点可覆盖），如 /usr/bin/mcporter */
+        CONSENSUS_MCPORTER_PATH: null,
         /** 非流式：因 max_tokens/length 截断时最多额外续写请求次数（0=关闭）。流式暂不续写。 */
         CONTINUATION_MAX_ROUNDS: 0,
         /** 续写时追加的 user 文案 */

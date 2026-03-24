@@ -64,6 +64,10 @@ const SELF_REPAIR_AFTER_CUTOFF_PATTERNS = [
 ];
 
 function assessCompletionOutcome(summary, payload, stopReason) {
+    if (summary.traceKind === 'mcp') {
+        return { status: 'success' };
+    }
+
     const finalText = [payload.finalResponse, payload.rawResponse]
         .find((text) => typeof text === 'string' && text.trim().length > 0)
         ?.trim() || '';
@@ -430,22 +434,24 @@ function addEntry(entry) {
  * @param {boolean} opts.hasTools
  * @param {number} opts.toolCount
  * @param {number} opts.messageCount
- * @param {'anthropic'|'openai'|'responses'|'gemini'} opts.apiFormat
+ * @param {'anthropic'|'openai'|'responses'|'gemini'|'mcp'} opts.apiFormat
  * @param {string} [opts.httpRequestId]
+ * @param {'mcp'} [opts.traceKind] — MCP 代理（非模型补全），不落库 token/长提示词，完成态不走模型降级启发式
  */
 export function createApiTraceLogger(opts) {
     const requestId = shortId();
+    const isMcp = opts.traceKind === 'mcp';
     const summary = {
         requestId,
         startTime: Date.now(),
         method: opts.method,
         path: opts.path,
-        model: opts.model,
-        stream: opts.stream,
-        apiFormat: opts.apiFormat || 'openai',
-        hasTools: opts.hasTools,
-        toolCount: opts.toolCount,
-        messageCount: opts.messageCount,
+        model: isMcp ? (opts.model || 'consensus-mcp') : opts.model,
+        stream: isMcp ? false : opts.stream,
+        apiFormat: isMcp ? 'mcp' : (opts.apiFormat || 'openai'),
+        hasTools: isMcp ? false : opts.hasTools,
+        toolCount: isMcp ? 0 : opts.toolCount,
+        messageCount: isMcp ? 0 : opts.messageCount,
         status: 'processing',
         responseChars: 0,
         retryCount: 0,
@@ -455,6 +461,7 @@ export function createApiTraceLogger(opts) {
         thinkingChars: 0,
         systemPromptLength: opts.systemPromptLength || 0,
     };
+    if (isMcp) summary.traceKind = 'mcp';
     if (opts.httpRequestId) summary.httpRequestId = opts.httpRequestId;
 
     const payload = {};
@@ -692,6 +699,43 @@ export class RequestLogger {
 
     recordToolCalls(calls) {
         this._payload.toolCalls = calls;
+    }
+
+    /**
+     * Consensus MCP 等：仅记录方法/工具名/路由，不记录 tools/call 的 arguments（避免敏感查询或凭据）。
+     * @param {{ jsonrpcMethod?: string, toolName?: string, selector?: string, jsonrpcId?: *, httpStatus?: number, rpcError?: string }} meta
+     */
+    recordMcpMeta(meta) {
+        const {
+            jsonrpcMethod,
+            toolName,
+            selector,
+            jsonrpcId,
+            httpStatus,
+            rpcError,
+        } = meta || {};
+        const prev = this._payload.mcp || {};
+        const merged = {
+            ...prev,
+            ...(jsonrpcMethod !== undefined ? { jsonrpcMethod } : {}),
+            ...(toolName !== undefined ? { toolName } : {}),
+            ...(selector !== undefined ? { selector } : {}),
+            ...(jsonrpcId !== undefined ? { jsonrpcId } : {}),
+            ...(httpStatus !== undefined ? { httpStatus } : {}),
+            ...(rpcError !== undefined ? { rpcError } : {}),
+        };
+        const jm = merged.jsonrpcMethod ?? prev.jsonrpcMethod ?? 'unknown';
+        let title = `MCP ${jm}`;
+        const tn = merged.toolName ?? prev.toolName;
+        const sel = merged.selector ?? prev.selector;
+        if (tn) title += ` · ${tn}`;
+        else if (sel) title += ` · ${sel}`;
+        this._summary.title = title;
+        if (merged.httpStatus !== undefined) this._summary.httpStatus = merged.httpStatus;
+        Object.keys(merged).forEach((k) => {
+            if (merged[k] === undefined) delete merged[k];
+        });
+        this._payload.mcp = merged;
     }
 
     complete(responseChars, stopReason) {

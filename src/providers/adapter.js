@@ -9,6 +9,7 @@ import { IFlowApiService } from './openai/iflow-core.js';
 import { CodexApiService } from './openai/codex-core.js';
 import { ForwardApiService } from './forward/forward-core.js';
 import { GrokApiService } from './grok/grok-core.js';
+import { ConsensusApiService } from './consensus/consensus-core.js';
 import { MODEL_PROVIDER } from '../utils/common.js';
 import logger from '../utils/logger.js';
 
@@ -636,6 +637,59 @@ export class ForwardApiServiceAdapter extends ApiServiceAdapter {
     }
 }
 
+// Consensus MCP（mcporter）服务适配器
+export class ConsensusApiServiceAdapter extends ApiServiceAdapter {
+    constructor(config) {
+        super();
+        this.consensusApiService = new ConsensusApiService(config);
+    }
+
+    async generateContent(model, requestBody) {
+        if (!this.consensusApiService.isInitialized) {
+            await this.consensusApiService.initialize();
+        }
+        return this.consensusApiService.generateContent(model, requestBody);
+    }
+
+    async *generateContentStream(model, requestBody) {
+        if (!this.consensusApiService.isInitialized) {
+            await this.consensusApiService.initialize();
+        }
+        yield* this.consensusApiService.generateContentStream(model, requestBody);
+    }
+
+    async listModels() {
+        if (!this.consensusApiService.isInitialized) {
+            await this.consensusApiService.initialize();
+        }
+        return this.consensusApiService.listModels();
+    }
+
+    async refreshToken() {
+        return Promise.resolve();
+    }
+
+    async forceRefreshToken() {
+        return Promise.resolve();
+    }
+
+    isExpiryDateNear() {
+        return false;
+    }
+
+    /**
+     * 代理调用 MCP 工具（底层使用 mcporter call）
+     * @param {string} selector - 如 consensus.search 或 search
+     * @param {object} args - 工具参数
+     */
+    async callMcpTool(selector, args) {
+        if (!this.consensusApiService.isInitialized) {
+            await this.consensusApiService.initialize();
+        }
+        return this.consensusApiService.callMcpTool(selector, args);
+    }
+}
+
 // Grok API 服务适配器
 export class GrokApiServiceAdapter extends ApiServiceAdapter {
     constructor(config) {
@@ -699,6 +753,7 @@ registerAdapter(MODEL_PROVIDER.QWEN_API, QwenApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.IFLOW_API, IFlowApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.CODEX_API, CodexApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.GROK_CUSTOM, GrokApiServiceAdapter);
+registerAdapter(MODEL_PROVIDER.CONSENSUS_MCP, ConsensusApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.FORWARD_API, ForwardApiServiceAdapter);
 
 // 用于存储服务适配器单例的映射

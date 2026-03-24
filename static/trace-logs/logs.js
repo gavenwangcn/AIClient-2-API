@@ -7,7 +7,7 @@ function toggleTheme(){const t=getTheme()==='dark'?'light':'dark';document.docum
 applyThemeIcon();
 
 let reqs=[],rmap={},logs=[],selId=null,cFil='all',cLv='all',sq='',curTab='logs',curPayload=null,timeFil='all';
-const PC={receive:'var(--blue)',convert:'var(--cyan)',send:'var(--purple)',response:'var(--purple)',thinking:'#a855f7',refusal:'var(--yellow)',retry:'var(--yellow)',truncation:'var(--yellow)',continuation:'var(--yellow)',toolparse:'var(--orange)',sanitize:'var(--orange)',stream:'var(--green)',complete:'var(--green)',error:'var(--red)',intercept:'var(--pink)',auth:'var(--t3)'};
+const PC={receive:'var(--blue)',convert:'var(--cyan)',send:'var(--purple)',response:'var(--purple)',upstream:'var(--orange)',respond:'var(--purple)',thinking:'#a855f7',refusal:'var(--yellow)',retry:'var(--yellow)',truncation:'var(--yellow)',continuation:'var(--yellow)',toolparse:'var(--orange)',sanitize:'var(--orange)',stream:'var(--green)',complete:'var(--green)',error:'var(--red)',intercept:'var(--pink)',auth:'var(--t3)'};
 
 // ===== Token Auth =====
 // 未校验前勿写入 localStorage，避免错误 ?token= 污染存储并导致登录页与 /logs 间死循环
@@ -82,7 +82,7 @@ function setTF(f,btn){timeFil=f;document.querySelectorAll('#tbar .tb').forEach(b
 // ===== Search & Filter =====
 function mS(r,q){
   const s=q.toLowerCase();
-  return r.requestId.includes(s)||(r.model||'').toLowerCase().includes(s)||(r.path||'').toLowerCase().includes(s)||(r.title||'').toLowerCase().includes(s);
+  return r.requestId.includes(s)||(r.model||'').toLowerCase().includes(s)||(r.path||'').toLowerCase().includes(s)||(r.title||'').toLowerCase().includes(s)||(r.apiFormat||'').toLowerCase().includes(s);
 }
 function updCnt(){
   const q=sq.toLowerCase();const cut=getTimeCutoff();
@@ -183,6 +183,7 @@ function renderSCard(s){
   if(s.statusReason)items.push(['降级原因',escH(s.statusReason)]);
   if(s.issueTags&&s.issueTags.length)items.push(['问题标签',escH(s.issueTags.join(', '))]);
   if(s.error)items.push(['错误','<span style="color:var(--red)">'+escH(s.error)+'</span>']);
+  if(s.traceKind==='mcp'&&typeof s.httpStatus==='number')items.push(['HTTP',String(s.httpStatus)]);
   document.getElementById('sgrid').innerHTML=items.map(([l,v])=>'<div class="si2"><span class="l">'+l+'</span><span class="v">'+v+'</span></div>').join('');
   renderPTL(s);
 }
@@ -218,7 +219,13 @@ function renderRequestTab(tc){
   const s=selId?rmap[selId]:null;
   if(s){
     h+='<div class="content-section"><div class="cs-title">📋 请求概要</div>';
-    h+='<div class="resp-box">'+syntaxHL({method:s.method,path:s.path,model:s.model,stream:s.stream,apiFormat:s.apiFormat,messageCount:s.messageCount,toolCount:s.toolCount,hasTools:s.hasTools})+'</div></div>';
+    const sum={method:s.method,path:s.path,model:s.model,stream:s.stream,apiFormat:s.apiFormat,messageCount:s.messageCount,toolCount:s.toolCount,hasTools:s.hasTools};
+    if(s.traceKind==='mcp'){sum.note='MCP 代理（无模型补全 token 统计）'}
+    h+='<div class="resp-box">'+syntaxHL(sum)+'</div></div>';
+  }
+  if(curPayload.mcp){
+    h+='<div class="content-section"><div class="cs-title">🔌 MCP（必要元数据，不含工具参数与 token）</div>';
+    h+='<div class="resp-box">'+syntaxHL(curPayload.mcp)+'</div></div>';
   }
   if(curPayload.tools&&curPayload.tools.length){
     h+='<div class="content-section"><div class="cs-title">🔧 工具定义 <span class="cnt">'+curPayload.tools.length+' 个</span></div>';

@@ -90,6 +90,9 @@ export const PROVIDER_MODELS = {
         'gpt-5.4',
     ],
     'forward-api': [],
+    'consensus-mcp-oauth': [
+        'consensus-paper-search',
+    ],
     'grok-custom': [
         'grok-3',
         'grok-3-mini',

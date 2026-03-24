@@ -81,6 +81,8 @@ export const MODEL_PROVIDER = {
     CODEX_API: 'openai-codex-oauth',
     FORWARD_API: 'forward-api',
     GROK_CUSTOM: 'grok-custom',
+    /** Consensus MCP（论文检索，经 mcporter 代理官方 MCP） */
+    CONSENSUS_MCP: 'consensus-mcp-oauth',
     AUTO: 'auto',
 }
 
@@ -94,6 +96,10 @@ export function getProtocolPrefix(provider) {
     // Special case for Codex - it needs its own protocol
     if (provider === 'openai-codex-oauth') {
         return 'codex';
+    }
+    // Consensus：对外以 OpenAI Chat 兼容 JSON 返回检索结果
+    if (provider === 'consensus-mcp-oauth') {
+        return 'openai';
     }
 
     const hyphenIndex = provider.indexOf('-');

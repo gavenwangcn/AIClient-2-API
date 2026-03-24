@@ -218,6 +218,19 @@ function getAvailableRoutes() {
             badgeClass: 'oauth'
         },
         {
+            provider: 'consensus-mcp-oauth',
+            name: 'Consensus MCP',
+            paths: {
+                openai: '/consensus-mcp-oauth/v1/chat/completions',
+                claude: '/consensus-mcp-oauth/v1/messages',
+                mcp: '/consensus-mcp-oauth/v1/mcp/call',
+                mcpJsonRpc: '/consensus-mcp-oauth/v1/mcp'
+            },
+            description: '论文检索：OpenAI 兼容聊天；MCP 协议为 POST /v1/mcp（JSON-RPC：initialize / tools/list / tools/call）或 POST /v1/mcp/call',
+            badge: 'MCP',
+            badgeClass: 'oauth'
+        },
+        {
             provider: 'openaiResponses-custom',
             name: 'OpenAI Responses',
             paths: {
@@ -431,6 +444,7 @@ function renderRoutingExamples(providerConfigs) {
         'openaiResponses-custom': 'fa-comment-alt',
         'openai-iflow': 'fa-wind',
         'openai-codex-oauth': 'fa-keyboard',
+        'consensus-mcp-oauth': 'fa-book',
         'grok-custom': 'fa-search'
     };
 
@@ -444,6 +458,7 @@ function renderRoutingExamples(providerConfigs) {
         'openai-qwen-oauth': 'qwen3-coder-plus',
         'openai-iflow': 'qwen3-max',
         'openai-codex-oauth': 'gpt-5',
+        'consensus-mcp-oauth': 'consensus-paper-search',
         'grok-custom': 'grok-3',
         'openaiResponses-custom': 'gpt-4o'
     };
