@@ -20,6 +20,23 @@ const BUFFER_MAX = 512 * 1024;
 /** 当前正在等待 OAuth 回调的 mcporter 子进程（新会话会结束旧进程） */
 let activeConsensusAuthChild = null;
 
+/** 汇总 mcporter 输出缓冲中的关键词，便于排查（不记录完整日志，避免刷屏） */
+function summarizeMcporterOutputBuffer(buf) {
+    if (!buf || typeof buf !== 'string') {
+        return { len: 0 };
+    }
+    const lower = buf.toLowerCase();
+    return {
+        len: buf.length,
+        hasAuthorizeUrl: !!extractConsensusAuthorizeUrl(buf),
+        has401: /401|unauthorized|authentication required/i.test(buf),
+        hasOAuth: /oauth|authorize/i.test(lower),
+        hasSSE: /\bsse\b|sse transport/i.test(lower),
+        hasStreamable: /streamable|streamable http/i.test(lower),
+        hasError: /error:|failed to|exited with code/i.test(lower),
+    };
+}
+
 /**
  * 从 mcporter --log-level debug 输出中提取 Consensus 授权页 URL
  * 示例：visit https://consensus.app/oauth/authorize/?response_type=code&... manually.
@@ -50,6 +67,9 @@ export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcp
     data.mcpServers = data.mcpServers || {};
     data.mcpServers[serverName] = { url: mcpUrl };
     await fsp.writeFile(absConfigPath, JSON.stringify(data, null, 2), 'utf8');
+    logger.info(
+        `[Consensus OAuth] ensureConsensusMcporterFile wrote mcpServers.${serverName}.url=${mcpUrl} -> ${absConfigPath}`
+    );
 }
 
 /**
@@ -101,10 +121,19 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
     const oauthTimeoutMs = Number(options.oauthTimeout ?? options.consensusOAuthTimeout ?? 120000) || 120000;
     const urlCaptureTimeoutMs = Math.min(URL_CAPTURE_TIMEOUT_MS, oauthTimeoutMs);
 
+    logger.info(
+        `[Consensus OAuth] start cwd=${process.cwd()} absConfig=${absConfig} relConfig=${relConfig} bin=${mcporterBin} serverName=${serverName} mcpUrl=${mcpUrl} oauthTimeoutMs=${oauthTimeoutMs} urlCaptureTimeoutMs=${urlCaptureTimeoutMs}`
+    );
+
     await ensureConsensusMcporterFile(absConfig, serverName, mcpUrl);
 
     stopPreviousMcporterAuth();
 
+    /**
+     * 首参数使用官方 MCP URL（与服务器上可成功的 `mcporter auth https://mcp.consensus.app/mcp` 一致）。
+     * 仍传 `--config`，凭据合并进同一 mcporter.json，供后续 `mcporter call consensus.*`（配置里保留 mcpServers[serverName]）。
+     * 仅用 `auth consensus` 时 mcporter 走「已命名服务器」分支，与 ad-hoc URL 的 OAuth/传输探测路径不同，部分环境会在 Streamable HTTP/SSE 握手阶段 401，无法打印浏览器链接。
+     */
     const args = [
         'auth',
         mcpUrl,
@@ -116,27 +145,37 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         String(oauthTimeoutMs),
     ];
 
-    logger.info(`[Consensus OAuth] ${mcporterBin} ${args.join(' ')}`);
+    logger.info(`[Consensus OAuth] ${mcporterBin} ${args.join(' ')} (server alias in file: ${serverName})`);
 
     const child = spawn(mcporterBin, args, {
         stdio: ['ignore', 'pipe', 'pipe'],
         windowsHide: true,
     });
     activeConsensusAuthChild = child;
+    logger.info(`[Consensus OAuth] mcporter auth child spawned pid=${child.pid ?? 'n/a'}`);
 
     let buffer = '';
-    const append = (chunk) => {
+    let firstChunkLogged = false;
+    const append = (chunk, streamLabel) => {
         buffer += chunk.toString();
         if (buffer.length > BUFFER_MAX) {
             buffer = buffer.slice(-BUFFER_MAX);
         }
+        if (!firstChunkLogged && buffer.length > 0) {
+            firstChunkLogged = true;
+            logger.info(
+                `[Consensus OAuth] first output from mcporter stream=${streamLabel} chunkLen=${chunk.length} summary=${JSON.stringify(summarizeMcporterOutputBuffer(buffer))}`
+            );
+        }
     };
 
-    child.stdout.on('data', append);
-    child.stderr.on('data', append);
+    child.stdout.on('data', (c) => append(c, 'stdout'));
+    child.stderr.on('data', (c) => append(c, 'stderr'));
 
     child.on('exit', (code, signal) => {
-        logger.info(`[Consensus OAuth] mcporter auth exited code=${code} signal=${signal || ''}`);
+        logger.info(
+            `[Consensus OAuth] mcporter auth exited code=${code} signal=${signal || ''} bufferLen=${buffer.length} summary=${JSON.stringify(summarizeMcporterOutputBuffer(buffer))}`
+        );
         if (activeConsensusAuthChild === child) {
             activeConsensusAuthChild = null;
         }
@@ -148,12 +187,28 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         }
     });
 
-    const deadline = Date.now() + urlCaptureTimeoutMs;
+    const waitStarted = Date.now();
+    const deadline = waitStarted + urlCaptureTimeoutMs;
     let authUrlCaptured = null;
+    let lastProgressLog = waitStarted;
     while (Date.now() < deadline) {
         authUrlCaptured = extractConsensusAuthorizeUrl(buffer);
         if (authUrlCaptured) break;
+        const now = Date.now();
+        if (now - lastProgressLog >= 5000) {
+            lastProgressLog = now;
+            const elapsedSec = Math.round((now - waitStarted) / 1000);
+            logger.info(
+                `[Consensus OAuth] still waiting for authorize URL in mcporter output elapsed=${elapsedSec}s remaining~${Math.max(0, Math.round((deadline - now) / 1000))}s ${JSON.stringify(summarizeMcporterOutputBuffer(buffer))}`
+            );
+        }
         await new Promise((r) => setTimeout(r, 40));
+    }
+
+    if (authUrlCaptured) {
+        logger.info(
+            `[Consensus OAuth] extracted authorize URL after ${Date.now() - waitStarted}ms urlLen=${authUrlCaptured.length}`
+        );
     }
 
     if (!authUrlCaptured) {
@@ -164,8 +219,12 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         }
         if (activeConsensusAuthChild === child) activeConsensusAuthChild = null;
         logger.error(`[Consensus OAuth] Log tail (truncated): ${buffer.slice(-2000)}`);
+        const hint401 =
+            /401|unauthorized|Non-200 status/i.test(buffer)
+                ? ' 日志中出现 401 / unauthorized：多为 mcporter 与官方 MCP 在 Streamable HTTP/SSE 握手阶段未进入浏览器 OAuth（可尝试升级镜像内 mcporter：`npm i -g mcporter@latest`）。若在 Docker 内运行，OAuth 回调需落在能访问容器内 127.0.0.1 的环境，或在本机执行 `mcporter auth consensus --config <你的 mcporter.json>` 后将凭据文件挂载进容器。'
+                : '';
         throw new Error(
-            '未在 mcporter 调试输出中解析到 Consensus 授权链接。请确认本机已安装 mcporter 且可访问 MCP，或稍后重试。'
+            `未在 mcporter 调试输出中解析到 Consensus 授权链接。请确认可访问 https://mcp.consensus.app/mcp 且 mcporter 版本较新。${hint401}`
         );
     }
 
@@ -201,7 +260,9 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
             if (looksLikeMcporterAuthed(text)) {
                 clearInterval(activePollTimer);
                 activePollTimer = null;
-                logger.info('[Consensus OAuth] Detected credentials in mcporter config, broadcasting success');
+                logger.info(
+                    `[Consensus OAuth] Detected credentials in mcporter config (mtime delta vs baseline), broadcasting success file=${absConfig}`
+                );
 
                 broadcastEvent('oauth_success', {
                     provider: 'consensus-mcp-oauth',
@@ -229,7 +290,9 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         }
     }, POLL_MS);
 
-    logger.info('[Consensus OAuth] Authorization URL captured for UI modal');
+    logger.info(
+        `[Consensus OAuth] Authorization URL captured for UI modal; child pid=${child.pid ?? 'n/a'} unref for redirect callback listener`
+    );
 
     return {
         authUrl: authUrlCaptured,
@@ -240,7 +303,7 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
             consensusMcpUrl: mcpUrl,
             oauthTimeoutMs,
             instructions:
-                '请点击「在浏览器中打开」完成 Consensus 登录。授权回调由本机 mcporter 进程监听（redirect_uri 为 127.0.0.1），请在与运行 mcporter 相同的环境中打开链接，或使用远程桌面在服务器本机浏览器中完成授权。',
+                '请点击「在浏览器中打开」完成 Consensus 登录。授权回调由运行 mcporter 的进程监听（通常为 127.0.0.1）。若在 Docker 内启动授权，浏览器回调可能无法到达容器内回环：可在宿主机对同一份 mcporter.json 执行 `/usr/bin/mcporter auth consensus --config ...` 完成登录后再挂载凭据，或为容器配置 host 网络/端口映射以接收回调。',
         },
     };
 }

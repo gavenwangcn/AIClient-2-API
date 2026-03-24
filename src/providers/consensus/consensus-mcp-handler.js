@@ -30,18 +30,29 @@ function runMcporterList(bin, configPath, extraArgs = []) {
         ? configPath
         : path.resolve(process.cwd(), configPath);
     const args = ['--config', abs, '--log-level', 'error', 'list', ...extraArgs, '--json'];
+    logger.info(`[Consensus MCP] mcporter list bin=${bin} config=${abs} extraArgs=${JSON.stringify(extraArgs)}`);
+    const t0 = Date.now();
     return new Promise((resolve, reject) => {
         const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+        logger.info(`[Consensus MCP] mcporter list pid=${proc.pid ?? 'n/a'}`);
         let stdout = '';
         let stderr = '';
         proc.stdout.on('data', (d) => { stdout += d.toString(); });
         proc.stderr.on('data', (d) => { stderr += d.toString(); });
-        proc.on('error', reject);
+        proc.on('error', (e) => {
+            logger.info(`[Consensus MCP] mcporter list spawn error: ${e.message}`);
+            reject(e);
+        });
         proc.on('close', (code) => {
+            const ms = Date.now() - t0;
             if (code !== 0) {
+                logger.info(
+                    `[Consensus MCP] mcporter list failed code=${code} durationMs=${ms} stderrPreview=${JSON.stringify(stderr.slice(0, 800))}`
+                );
                 reject(new Error(stderr || stdout || `mcporter list exited ${code}`));
                 return;
             }
+            logger.info(`[Consensus MCP] mcporter list ok durationMs=${ms} stdoutLen=${stdout.length}`);
             try {
                 resolve(stdout.trim() ? JSON.parse(stdout.trim()) : {});
             } catch {
@@ -66,6 +77,12 @@ function normalizeToolsListResult(raw) {
  * 客户端与 AIClient-2-API 之间使用标准 MCP 消息（JSON-RPC），由本服务转发至 mcporter CLI。
  */
 async function handleConsensusMcpJsonRpc(body, currentConfig) {
+    const rpcTag = `[Consensus MCP] JSON-RPC method=${body?.method ?? 'n/a'} id=${body?.id !== undefined ? body.id : 'n/a'}`;
+    logger.info(rpcTag);
+    if (body?.method === 'tools/call' && body.params?.name) {
+        logger.info(`[Consensus MCP] tools/call toolName=${body.params.name} (arguments omitted)`);
+    }
+
     // JSON-RPC 通知（无 id）：仅 notifications/* 返回 204，无响应体
     if (body && body.jsonrpc === '2.0' && body.method && !('id' in body)) {
         if (String(body.method).startsWith('notifications/')) {
@@ -160,6 +177,14 @@ function setMcpResponseHeaders(res) {
 export async function handleConsensusMcpRoutes(method, pathName, req, res, currentConfig, _providerPoolManager) {
     if (currentConfig.MODEL_PROVIDER !== MODEL_PROVIDER.CONSENSUS_MCP) {
         return false;
+    }
+
+    const isMcpRoute =
+        (method === 'POST' && (pathName === '/v1/mcp' || pathName === '/mcp')) ||
+        (method === 'GET' && pathName === '/v1/mcp/tools') ||
+        (method === 'POST' && pathName === '/v1/mcp/call');
+    if (isMcpRoute) {
+        logger.info(`[Consensus MCP] route hit ${method} ${pathName}`);
     }
 
     let trace = null;

@@ -55,7 +55,10 @@ export async function runMcporterCall(config) {
         '--output', 'json',
     ];
 
-    logger.info(`[Consensus] mcporter ${bin} call ${selector}`);
+    const t0 = Date.now();
+    logger.info(
+        `[Consensus] mcporter call start bin=${bin} selector=${selector} config=${absConfig} argTokenCount=${tokens.length}`
+    );
 
     return new Promise((resolve, reject) => {
         const proc = spawn(bin, fullArgs, {
@@ -63,17 +66,28 @@ export async function runMcporterCall(config) {
             stdio: ['ignore', 'pipe', 'pipe'],
             windowsHide: true,
         });
+        logger.info(`[Consensus] mcporter call spawned pid=${proc.pid ?? 'n/a'}`);
         let stdout = '';
         let stderr = '';
         proc.stdout.on('data', (d) => { stdout += d.toString(); });
         proc.stderr.on('data', (d) => { stderr += d.toString(); });
-        proc.on('error', (err) => reject(err));
+        proc.on('error', (err) => {
+            logger.info(`[Consensus] mcporter call spawn error: ${err.message}`);
+            reject(err);
+        });
         proc.on('close', (code) => {
+            const ms = Date.now() - t0;
             const trimmedOut = stdout.trim();
             if (code !== 0) {
+                logger.info(
+                    `[Consensus] mcporter call failed code=${code} durationMs=${ms} stderrLen=${stderr.length} stdoutLen=${stdout.length} stderrPreview=${JSON.stringify(stderr.slice(0, 800))}`
+                );
                 reject(new Error(stderr || trimmedOut || `mcporter exited with code ${code}`));
                 return;
             }
+            logger.info(
+                `[Consensus] mcporter call ok selector=${selector} durationMs=${ms} stdoutLen=${trimmedOut.length}`
+            );
             try {
                 if (!trimmedOut) {
                     resolve({ ok: true, raw: '' });
