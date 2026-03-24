@@ -135,10 +135,26 @@ export class ConsensusApiService {
         }
 
         data.mcpServers = data.mcpServers || {};
-        if (!data.mcpServers[this.serverName]?.url) {
-            data.mcpServers[this.serverName] = { url: this.mcpUrl };
+        const redirect = String(
+            this.config.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || process.env.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || ''
+        ).trim();
+        const existing = data.mcpServers[this.serverName];
+        const next = {
+            ...(existing && typeof existing === 'object' ? existing : {}),
+            url: this.mcpUrl,
+        };
+        if (redirect) {
+            next.oauthRedirectUrl = redirect;
+        }
+        const prevJson = JSON.stringify(existing || {});
+        const nextJson = JSON.stringify(next);
+        if (prevJson !== nextJson || !existing?.url) {
+            data.mcpServers[this.serverName] = next;
             await fsp.writeFile(abs, JSON.stringify(data, null, 2), 'utf8');
-            logger.info(`[Consensus] Wrote MCP server "${this.serverName}" -> ${this.mcpUrl} in ${abs}`);
+            logger.info(
+                `[Consensus] Wrote MCP server "${this.serverName}" -> ${this.mcpUrl} in ${abs}` +
+                    (redirect ? ` oauthRedirectUrl=${redirect}` : '')
+            );
         }
     }
 

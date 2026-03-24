@@ -16,3 +16,7 @@ api-potluck-data.json
 # Codex credentials
 configs/codex/
 
+# mcporter OAuth vault（docker-compose 挂载目录，含 credentials.json）
+docker/mcporter-data/
+mcporter-data/
+

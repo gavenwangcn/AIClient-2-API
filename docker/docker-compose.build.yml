@@ -11,12 +11,19 @@ services:
       - "3000:3000"
       - "8085-8087:8085-8087" 
       - "1455:1455"
-      - "19876-19880:19876-19880"
+      # OAuth 固定回调：宿主机浏览器 -> 127.0.0.1:19876 -> 容器内 mcporter 监听（与 CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL 一致）
+      - "19876:19876"
+      - "19877-19880:19877-19880"
     volumes:
       - ./configs:/app/configs
       - ./logs:/app/logs
+      # mcporter OAuth 持久化：Linux 下 vault 为 $HOME/.mcporter/credentials.json（含 access_token / refresh_token）
+      - ./mcporter-data:/app/.mcporter
     environment:
       - ARGS=
+      # 与 Dockerfile 一致，使 mcporter 将 ~/.mcporter 落在 /app/.mcporter 并随卷持久化
+      - HOME=/app
+      - CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL=http://127.0.0.1:19876/callback
       - TRACE_LOG_DB_PATH=/app/logs/aiclient2api-trace.db
       - TRACE_LOG_MAX_DAYS=30
     healthcheck:

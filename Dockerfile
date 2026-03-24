@@ -22,6 +22,9 @@ LABEL description="Docker image for AIClient2API server"
 # 安装必要的系统工具（tar 用于更新功能，git 用于版本检查，procps 用于系统监控）
 RUN apk add --no-cache tar git procps
 
+# 设置工作目录；HOME=/app 使 mcporter OAuth 数据落在 /app/.mcporter（credentials.json 等），便于 compose 卷挂载持久化
+ENV HOME=/app
+
 # 设置工作目录
 WORKDIR /app
 
@@ -49,7 +52,8 @@ RUN chmod +x /app/tls-sidecar/tls-sidecar
 USER root
 
 # 日志目录：应用日志 + SQLite 全链路追踪库（默认 ./logs/aiclient2api-trace.db，建议挂载卷持久化）
-RUN mkdir -p /app/logs
+# mcporter：OAuth vault 与配置缓存目录（挂载卷到此处可长期保存 access/refresh token）
+RUN mkdir -p /app/logs /app/.mcporter
 
 # 暴露端口
 EXPOSE 3000 8085 8086 19876-19880
