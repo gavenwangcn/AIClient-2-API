@@ -221,8 +221,9 @@ function tryLogOAuthArtifactsFromMcporterBuffer(buffer) {
 
 /**
  * 是否对 `mcporter auth` 传入 `--config`。
- * 默认 false：与「仅 URL、无 --config」在服务器上易打印 authorize 链接的行为一致；OAuth 凭据落在 mcporter 默认配置（见下方合并逻辑）。
- * 设为 true 或环境变量 CONSENSUS_MCPORTER_AUTH_USE_CONFIG=1 则恢复旧行为（凭据直接写入项目 mcporter.json）。
+ * - 未设置固定 redirect：默认 false（与 `mcporter auth <URL>` 无 --config 一致）。
+ * - 已设置 CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL：默认 true，否则 mcporter 不会读项目里的 oauthRedirectUrl，authorize 链接里 redirect_uri 仍为随机端口。
+ * 显式 CONSENSUS_MCPORTER_AUTH_USE_CONFIG=0 可强制无 --config（固定 redirect 将不生效）。
  * @returns {{ value: boolean, source: string }}
  */
 function resolveConsensusAuthUseConfigMeta(options) {
@@ -232,12 +233,20 @@ function resolveConsensusAuthUseConfigMeta(options) {
             source: 'request body consensusMcporterAuthUseConfig',
         };
     }
+    const redirectSet = !!(process.env.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || '').trim();
     const raw = process.env.CONSENSUS_MCPORTER_AUTH_USE_CONFIG;
     const v = raw === undefined ? '' : String(raw).trim();
     if (v === '1' || /^true$/i.test(v)) {
         return { value: true, source: 'env CONSENSUS_MCPORTER_AUTH_USE_CONFIG=true' };
     }
     if (v === '0' || /^false$/i.test(v)) {
+        if (redirectSet) {
+            return {
+                value: false,
+                source:
+                    'env CONSENSUS_MCPORTER_AUTH_USE_CONFIG=false（已配置固定 redirect URL 时仍会走无 --config 流程，oauthRedirectUrl 不生效 → redirect_uri 多为随机端口）',
+            };
+        }
         return { value: false, source: 'env CONSENSUS_MCPORTER_AUTH_USE_CONFIG=false' };
     }
     if (v.length > 0) {
@@ -246,13 +255,24 @@ function resolveConsensusAuthUseConfigMeta(options) {
             source: `env CONSENSUS_MCPORTER_AUTH_USE_CONFIG (未识别 "${v}"，按 false)`,
         };
     }
-    return { value: false, source: 'default (未设置请求体与环境变量，等价 false)' };
+    if (redirectSet) {
+        return {
+            value: true,
+            source: 'default true：检测到 CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL，需 --config 使 mcporter 使用项目内 oauthRedirectUrl 固定回调端口',
+        };
+    }
+    return { value: false, source: 'default false（未设置固定 redirect，与 mcporter auth <URL> 无 --config 一致）' };
 }
 
 /** mcporter 无 --config 时写入默认位置（与 steipete/mcporter 的 homeConfigCandidates 一致） */
 function getMcporterHomeConfigPaths() {
     const base = path.join(os.homedir(), '.mcporter');
     return [path.join(base, 'mcporter.json'), path.join(base, 'mcporter.jsonc')];
+}
+
+/** mcporter 0.7.x OAuth vault：access/refresh 等在 ~/.mcporter/credentials.json */
+function getMcporterVaultCredentialsPath() {
+    return path.join(os.homedir(), '.mcporter', 'credentials.json');
 }
 
 /** mcporter 在 cwd 下若存在 `config/mcporter.json` 也会优先于 home */
@@ -268,9 +288,10 @@ async function mergeConsensusMcpFromSourceToProject(absConfigPath, serverName, m
     try {
         raw = await fsp.readFile(sourcePath, 'utf8');
     } catch (e) {
-        logger.info(
-            `[Consensus OAuth] merge skip: cannot read ${sourcePath} (${e.code || e.message || 'unknown'})`
-        );
+        if (e.code === 'ENOENT') {
+            return false;
+        }
+        logger.info(`[Consensus OAuth] merge skip: cannot read ${sourcePath} (${e.code || e.message || 'unknown'})`);
         return false;
     }
     if (!looksLikeMcporterAuthed(raw)) {
@@ -343,13 +364,106 @@ async function mergeConsensusMcpFromSourceToProject(absConfigPath, serverName, m
 
 /** 供日志展示的合并候选路径（不含与项目文件同一路径） */
 function getMergeCandidatePathsForLog(absConfigPath) {
-    return [getMcporterProjectConfigPath(), ...getMcporterHomeConfigPaths()].filter(
+    const extra = [getMcporterVaultCredentialsPath()];
+    return [...extra, getMcporterProjectConfigPath(), ...getMcporterHomeConfigPaths()].filter(
         (p) => path.resolve(p) !== path.resolve(absConfigPath)
     );
 }
 
+/**
+ * 从 ~/.mcporter/credentials.json（vault）合并 Consensus 条目到项目 mcporter.json
+ * 结构见 mcporter oauth-vault：{ version:1, entries: { "<name>|<hash>": { tokens, serverUrl, ... } } }
+ */
+async function mergeConsensusMcpFromVaultCredentials(absConfigPath, serverName, mcpUrl) {
+    const vaultPath = getMcporterVaultCredentialsPath();
+    let raw = '';
+    try {
+        raw = await fsp.readFile(vaultPath, 'utf8');
+    } catch (e) {
+        if (e.code === 'ENOENT') {
+            return false;
+        }
+        logger.info(`[Consensus OAuth] vault merge: cannot read ${vaultPath} (${e.code || e.message})`);
+        return false;
+    }
+    let data;
+    try {
+        data = JSON.parse(raw);
+    } catch (e) {
+        logger.info(`[Consensus OAuth] vault merge: JSON parse failed ${vaultPath}: ${e.message}`);
+        return false;
+    }
+    if (!data || data.version !== 1 || !data.entries || typeof data.entries !== 'object') {
+        return false;
+    }
+    let picked = null;
+    let pickedKey = '';
+    for (const [key, entry] of Object.entries(data.entries)) {
+        if (!entry || typeof entry !== 'object') continue;
+        const url = entry.serverUrl || '';
+        if (typeof url === 'string' && url.includes('mcp.consensus.app')) {
+            picked = entry;
+            pickedKey = key;
+            break;
+        }
+    }
+    if (!picked) {
+        for (const [key, entry] of Object.entries(data.entries)) {
+            if (!entry || typeof entry !== 'object') continue;
+            const tok = entry.tokens;
+            if (tok && typeof tok === 'object' && (tok.access_token || tok.refresh_token)) {
+                const hay = JSON.stringify(entry);
+                if (hay.includes('mcp.consensus.app') || hay.includes('consensus')) {
+                    picked = entry;
+                    pickedKey = key;
+                    break;
+                }
+            }
+        }
+    }
+    if (!picked || !picked.tokens || typeof picked.tokens !== 'object') {
+        return false;
+    }
+    const t = picked.tokens;
+    if (!t.access_token && !t.refresh_token) {
+        return false;
+    }
+
+    let target = {};
+    try {
+        const prev = await fsp.readFile(absConfigPath, 'utf8');
+        target = JSON.parse(prev);
+    } catch {
+        /* empty */
+    }
+    target.mcpServers = target.mcpServers || {};
+    target.mcpServers[serverName] = {
+        ...(target.mcpServers[serverName] && typeof target.mcpServers[serverName] === 'object'
+            ? target.mcpServers[serverName]
+            : {}),
+        url: picked.serverUrl || mcpUrl,
+        ...t,
+    };
+    await fsp.writeFile(absConfigPath, JSON.stringify(target, null, 2), 'utf8');
+    logger.info(
+        `[Consensus OAuth] merged OAuth from vault ${vaultPath} entry=${pickedKey} -> ${absConfigPath} server=${serverName}`
+    );
+    if (isConsensusOAuthSecretsLogEnabled()) {
+        try {
+            const mergedText = await fsp.readFile(absConfigPath, 'utf8');
+            logConsensusMcporterJsonSecrets(`vault merge target ${absConfigPath}`, mergedText, serverName);
+        } catch {
+            /* ignore */
+        }
+    }
+    return true;
+}
+
 /** 尝试从 mcporter 默认位置把凭据合并进项目配置 */
 async function tryMergeMcporterOAuthIntoProject(absConfigPath, serverName, mcpUrl) {
+    const okVault = await mergeConsensusMcpFromVaultCredentials(absConfigPath, serverName, mcpUrl);
+    if (okVault) return true;
+
     const candidates = [getMcporterProjectConfigPath(), ...getMcporterHomeConfigPaths()];
     for (const p of candidates) {
         if (path.resolve(p) === path.resolve(absConfigPath)) continue;
