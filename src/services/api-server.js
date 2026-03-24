@@ -117,6 +117,7 @@ import 'dotenv/config'; // Import dotenv and configure it
 import '../converters/register-converters.js'; // 注册所有转换器
 import { getProviderPoolManager } from './service-manager.js';
 import { isRetryableNetworkError } from '../utils/common.js';
+import { initApiTraceLogger } from '../utils/api-trace-logger.js';
 
 // 检测是否作为子进程运行
 const IS_WORKER_PROCESS = process.env.IS_WORKER_PROCESS === 'true';
@@ -243,6 +244,8 @@ function setupSignalHandlers() {
 async function startServer() {
     // Initialize configuration
     await initializeConfig(process.argv.slice(2), 'configs/config.json');
+
+    initApiTraceLogger(CONFIG);
     
     // 自动关联 configs 目录中的配置文件到对应的提供商
     // logger.info('[Initialization] Checking for unlinked provider configs...');
@@ -314,6 +317,7 @@ async function startServer() {
         logger.info(`  Host: ${CONFIG.HOST}`);
         logger.info(`  Port: ${CONFIG.SERVER_PORT}`);
         logger.info(`  Required API Key: ${CONFIG.REQUIRED_API_KEY}`);
+        logger.info(`  Trace log DB (SQLite): ${CONFIG.TRACE_LOG_DB_PATH || './logs/aiclient2api-trace.db'}`);
         logger.info(`  Prompt Logging: ${CONFIG.PROMPT_LOG_MODE}${CONFIG.PROMPT_LOG_FILENAME ? ` (to ${CONFIG.PROMPT_LOG_FILENAME})` : ''}`);
         logger.info(`------------------------------------------`);
         logger.info(`\nUnified API Server running on http://${CONFIG.HOST}:${CONFIG.SERVER_PORT}`);
@@ -323,6 +327,7 @@ async function startServer() {
         logger.info(`  • Claude-compatible: /v1/messages`);
         logger.info(`  • Health check: /health`);
         logger.info(`  • UI Management Console: http://${CONFIG.HOST}:${CONFIG.SERVER_PORT}/`);
+        logger.info(`  • API trace logs: http://${CONFIG.HOST === '0.0.0.0' ? 'localhost' : CONFIG.HOST}:${CONFIG.SERVER_PORT}/logs`);
 
         // Auto-open browser to UI (only if host is 0.0.0.0 or 127.0.0.1)
         // if (CONFIG.HOST === '0.0.0.0' || CONFIG.HOST === '127.0.0.1') {

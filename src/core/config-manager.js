@@ -89,7 +89,9 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         TLS_SIDECAR_ENABLED_PROVIDERS: [], // 启用 TLS Sidecar 的提供商列表
         TLS_SIDECAR_PORT: 9090,     // sidecar 监听端口
         TLS_SIDECAR_BINARY_PATH: null, // 自定义二进制路径（默认自动搜索）
-        TLS_SIDECAR_PROXY_URL: null    // TLS Sidecar 专用的上游代理地址
+        TLS_SIDECAR_PROXY_URL: null,   // TLS Sidecar 专用的上游代理地址
+        TRACE_LOG_DB_PATH: './logs/aiclient2api-trace.db',
+        TRACE_LOG_MAX_DAYS: 30
     };
 
     let currentConfig = { ...defaultConfig };
@@ -196,6 +198,15 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
 
     // Assign to the exported CONFIG
     Object.assign(CONFIG, currentConfig);
+
+    // Docker / 环境变量可覆盖 SQLite 全链路日志路径与保留天数
+    if (process.env.TRACE_LOG_DB_PATH) {
+        CONFIG.TRACE_LOG_DB_PATH = process.env.TRACE_LOG_DB_PATH;
+    }
+    if (process.env.TRACE_LOG_MAX_DAYS) {
+        const n = parseInt(process.env.TRACE_LOG_MAX_DAYS, 10);
+        if (!Number.isNaN(n) && n > 0) CONFIG.TRACE_LOG_MAX_DAYS = n;
+    }
 
     // Initialize logger
     logger.initialize({

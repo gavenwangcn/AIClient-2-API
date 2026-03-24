@@ -6,6 +6,7 @@ import logger from './logger.js';
 import { convertData, getOpenAIStreamChunkStop } from '../convert/convert.js';
 import { ProviderStrategyFactory } from './provider-strategies.js';
 import { getPluginManager } from '../core/plugin-manager.js';
+import { createApiTraceLogger, countMessagesInBody, countToolsInBody } from './api-trace-logger.js';
 
 // ==================== 网络错误处理 ====================
 
@@ -336,18 +337,31 @@ export async function handleStreamRequest(res, service, model, requestBody, from
 
     let hasToolCall = false;
     let hasMessageStop = false; // 跟踪是否已经发送过结束标志（message_stop / done）
+    let stopReason;
 
     try {
         // fs.writeFile('request'+Date.now()+'.json', JSON.stringify(requestBody));
         // The service returns a stream in its native format (toProvider).
         const needsConversion = getProtocolPrefix(fromProvider) !== getProtocolPrefix(toProvider);
         requestBody.model = model;
+        const tUpstream = Date.now();
         const nativeStream = await service.generateContentStream(model, requestBody);
+        const trace = CONFIG?._apiTraceLogger;
+        if (trace && trace.isProcessing()) {
+            trace.recordUpstreamApiTime(tUpstream);
+            trace.endPhase();
+            trace.startPhase('response', '流式响应');
+        }
         const addEvent = getProtocolPrefix(fromProvider) === MODEL_PROTOCOL_PREFIX.CLAUDE || getProtocolPrefix(fromProvider) === MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES;
         // 为每个请求生成唯一 ID，用于在单例 converter 中隔离并发流状态
         const streamRequestId = `req_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
 
+        let firstChunk = true;
         for await (const nativeChunk of nativeStream) {
+            if (firstChunk && trace && trace.isProcessing()) {
+                trace.recordTTFT();
+                firstChunk = false;
+            }
             // 检查客户端是否已断开连接
             if (clientDisconnected.value) {
                 logger.info('[Stream] Stopping iteration due to client disconnect');
@@ -422,6 +436,10 @@ export async function handleStreamRequest(res, service, model, requestBody, from
                     }
                 }
 
+                if (chunk?.choices?.[0]?.finish_reason) stopReason = chunk.choices[0].finish_reason;
+                if (chunk?.type === 'message_delta' && chunk.delta?.stop_reason) stopReason = chunk.delta.stop_reason;
+                if (chunk?.candidates?.[0]?.finishReason) stopReason = chunk.candidates[0].finishReason;
+
                 // 防止重复发送结束标志
                 // OpenAI: choices[].finish_reason
                 // Claude: message_stop
@@ -490,6 +508,8 @@ export async function handleStreamRequest(res, service, model, requestBody, from
         // 如果已经发送了数据（包括 metadata），不进行重试（避免响应数据损坏或顺序错误）
         if (anyDataSent) {
             logger.info(`[Stream Retry] Cannot retry: data already sent to client`);
+            const trace = CONFIG?._apiTraceLogger;
+            if (trace && trace.isProcessing()) trace.fail(error.message);
             // 直接发送错误并结束
             const errorPayload = createStreamErrorResponse(error, fromProvider);
             if (!res.writableEnded) {
@@ -551,7 +571,9 @@ export async function handleStreamRequest(res, service, model, requestBody, from
                 
                 if (result && result.service) {
                     logger.info(`[Stream Retry] Switched to new credential: ${result.uuid} (provider: ${result.actualProviderType})`);
-                    
+                    if (CONFIG?._apiTraceLogger) {
+                        CONFIG._apiTraceLogger.updateSummary({ retryCount: currentRetry + 1 });
+                    }
                     // 使用新服务重试
                     const newRetryContext = {
                         ...retryContext,
@@ -584,6 +606,9 @@ export async function handleStreamRequest(res, service, model, requestBody, from
                 logger.error(`[Stream Retry] Failed to get alternative service:`, retryError.message);
             }
         }
+
+        const traceErr = CONFIG?._apiTraceLogger;
+        if (traceErr && traceErr.isProcessing()) traceErr.fail(error.message);
 
         // 使用新方法创建符合 fromProvider 格式的流式错误响应
         const errorPayload = createStreamErrorResponse(error, fromProvider);
@@ -646,6 +671,14 @@ export async function handleStreamRequest(res, service, model, requestBody, from
         if (!isRetry) {
             await logConversation('output', fullResponseText, PROMPT_LOG_MODE, PROMPT_LOG_FILENAME);
         }
+        const traceFin = CONFIG?._apiTraceLogger;
+        if (traceFin && traceFin.isProcessing()) {
+            traceFin.endPhase();
+            traceFin.recordRawResponse(fullResponseText);
+            traceFin.recordFinalResponse(fullResponseText);
+            traceFin.updateSummary({ toolCallsDetected: hasToolCall ? 1 : 0 });
+            traceFin.complete(fullResponseText.length, stopReason);
+        }
         // fs.writeFile('oldResponseChunk'+Date.now()+'.json', fullOldResponseJson);
         // fs.writeFile('responseChunk'+Date.now()+'.json', fullResponseJson);
     }
@@ -663,8 +696,16 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
         // The service returns the response in its native format (toProvider).
         const needsConversion = getProtocolPrefix(fromProvider) !== getProtocolPrefix(toProvider);
         requestBody.model = model;
+        const trace = CONFIG?._apiTraceLogger;
+        const tUpstream = Date.now();
         // fs.writeFile('oldRequest'+Date.now()+'.json', JSON.stringify(requestBody));
         const nativeResponse = await service.generateContent(model, requestBody);
+        if (trace && trace.isProcessing()) {
+            trace.recordUpstreamApiTime(tUpstream);
+            trace.endPhase();
+            trace.startPhase('response', '非流式响应');
+            trace.recordTTFT();
+        }
         const responseText = extractResponseText(nativeResponse, toProvider);
 
         // Convert the response back to the client's format (fromProvider), if necessary.
@@ -692,6 +733,12 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
         //logger.info(`[Response] Sending response to client: ${JSON.stringify(clientResponse)}`);
         await handleUnifiedResponse(res, JSON.stringify(clientResponse), false);
         await logConversation('output', responseText, PROMPT_LOG_MODE, PROMPT_LOG_FILENAME);
+        if (trace && trace.isProcessing()) {
+            trace.recordRawResponse(responseText);
+            trace.recordFinalResponse(responseText);
+            trace.endPhase();
+            trace.complete(responseText.length, undefined);
+        }
         // fs.writeFile('oldResponse'+Date.now()+'.json', JSON.stringify(clientResponse));
         
         // 一元请求成功完成，统计使用次数，错误次数重置为0
@@ -752,7 +799,9 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
                 
                 if (result && result.service) {
                     logger.info(`[Unary Retry] Switched to new credential: ${result.uuid} (provider: ${result.actualProviderType})`);
-                    
+                    if (CONFIG?._apiTraceLogger) {
+                        CONFIG._apiTraceLogger.updateSummary({ retryCount: currentRetry + 1 });
+                    }
                     // 使用新服务重试
                     const newRetryContext = {
                         ...retryContext,
@@ -783,6 +832,9 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
                 logger.error(`[Unary Retry] Failed to get alternative service:`, retryError.message);
             }
         }
+
+        const traceFail = CONFIG?._apiTraceLogger;
+        if (traceFail && traceFail.isProcessing()) traceFail.fail(error.message);
 
         // 使用新方法创建符合 fromProvider 格式的错误响应
         const errorResponse = createErrorResponse(error, fromProvider);
@@ -869,6 +921,14 @@ export async function handleModelListRequest(req, res, service, endpointType, CO
     }
 }
 
+
+function mapEndpointToApiFormat(endpointType) {
+    if (endpointType === ENDPOINT_TYPE.OPENAI_CHAT) return 'openai';
+    if (endpointType === ENDPOINT_TYPE.OPENAI_RESPONSES) return 'responses';
+    if (endpointType === ENDPOINT_TYPE.CLAUDE_MESSAGE) return 'anthropic';
+    if (endpointType === ENDPOINT_TYPE.GEMINI_CONTENT) return 'gemini';
+    return 'openai';
+}
 
 /**
  * Handles requests for content generation (both unary and streaming). This function
@@ -972,6 +1032,31 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
 
     // 4. Log the incoming prompt (after potential conversion to the backend's format).
     const promptText = extractPromptText(processedRequestBody, toProvider);
+
+    const apiPath = requestPath || '/v1/chat/completions';
+    const apiFormat = mapEndpointToApiFormat(endpointType);
+    const trace = createApiTraceLogger({
+        httpRequestId: logger.getCurrentRequestId(),
+        method: 'POST',
+        path: apiPath,
+        model,
+        stream: isStream,
+        hasTools: countToolsInBody(originalRequestBody) > 0,
+        toolCount: countToolsInBody(originalRequestBody),
+        messageCount: countMessagesInBody(originalRequestBody),
+        apiFormat,
+        systemPromptLength: 0,
+    });
+    trace.startPhase('receive', '收到请求');
+    trace.recordOriginalRequest(originalRequestBody);
+    trace.endPhase();
+    trace.startPhase('convert', '协议转换');
+    trace.endPhase();
+    trace.recordUpstreamRequest(processedRequestBody, toProvider);
+    trace.startPhase('send', '调用上游');
+    trace.info('Handler', 'receive', `→ ${toProvider} (${fromProvider})`);
+    CONFIG._apiTraceLogger = trace;
+
     await logConversation('input', promptText, CONFIG.PROMPT_LOG_MODE, PROMPT_LOG_FILENAME);
     
     // 5. Call the appropriate stream or unary handler, passing the provider info.

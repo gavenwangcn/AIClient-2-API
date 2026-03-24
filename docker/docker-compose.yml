@@ -12,8 +12,13 @@ services:
       - "19876-19880:19876-19880"
     volumes:
       - ./configs:/app/configs
+      # 持久化 SQLite 全链路日志（TRACE_LOG_DB_PATH 默认 ./logs/aiclient2api-trace.db）
+      - ./logs:/app/logs
     environment:
       - ARGS=
+      # 可选：显式指定库路径（与上面卷一致时保持默认即可）
+      - TRACE_LOG_DB_PATH=/app/logs/aiclient2api-trace.db
+      - TRACE_LOG_MAX_DAYS=30
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s

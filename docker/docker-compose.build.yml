@@ -14,8 +14,11 @@ services:
       - "19876-19880:19876-19880"
     volumes:
       - ./configs:/app/configs
+      - ./logs:/app/logs
     environment:
       - ARGS=
+      - TRACE_LOG_DB_PATH=/app/logs/aiclient2api-trace.db
+      - TRACE_LOG_MAX_DAYS=30
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s

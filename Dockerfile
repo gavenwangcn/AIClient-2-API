@@ -28,10 +28,10 @@ WORKDIR /app
 # 复制package.json和package-lock.json（如果存在）
 COPY package*.json ./
 
-# 安装依赖
-# 使用--production标志只安装生产依赖，减小镜像大小
-# 使用--omit=dev来排除开发依赖
-RUN npm install
+# 安装依赖（better-sqlite3 为原生模块，Alpine 下需编译工具；编译完成后删除以减小体积）
+RUN apk add --no-cache --virtual .build-deps python3 make g++ sqlite-dev \
+    && npm install \
+    && apk del .build-deps
 
 # 复制源代码
 COPY . .
@@ -43,7 +43,7 @@ RUN chmod +x /app/tls-sidecar/tls-sidecar
 
 USER root
 
-# 创建目录用于存储日志和系统提示文件
+# 日志目录：应用日志 + SQLite 全链路追踪库（默认 ./logs/aiclient2api-trace.db，建议挂载卷持久化）
 RUN mkdir -p /app/logs
 
 # 暴露端口

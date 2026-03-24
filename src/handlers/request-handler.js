@@ -12,6 +12,7 @@ import { PROMPT_LOG_FILENAME } from '../core/config-manager.js';
 import { getPluginManager } from '../core/plugin-manager.js';
 import { randomUUID } from 'crypto';
 import { handleGrokAssetsProxy } from '../utils/grok-assets-proxy.js';
+import { handleTraceLogRequest } from '../ui-modules/trace-log-api.js';
 
 /**
  * Generate a short unique request ID (8 characters)
@@ -77,6 +78,10 @@ export function createRequestHandler(config, providerPoolManager) {
                     res.end();
                     return;
                 }
+
+                // 全链路日志页与 API（与 cursor2api /logs 对齐，鉴权使用 REQUIRED_API_KEY）
+                const traceHandled = await handleTraceLogRequest(method, path, req, res, currentConfig);
+                if (traceHandled) return;
 
                 // Serve static files for UI (除了登录页面需要认证)
                 // 检查是否是插件静态文件

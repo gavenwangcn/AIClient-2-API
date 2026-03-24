@@ -1,6 +1,7 @@
 {
   "type": "module",
   "dependencies": {
+    "better-sqlite3": "^11.8.1",
     "@anthropic-ai/tokenizer": "^0.0.4",
     "adm-zip": "^0.5.16",
     "axios": "^1.10.0",
