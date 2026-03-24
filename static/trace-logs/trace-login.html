@@ -33,15 +33,65 @@ body{font-family:'Inter',sans-serif;background:linear-gradient(135deg,#e0e7ff 0%
   <div class="err" id="errMsg">Token 无效，请检查后重试</div>
 </div>
 <script>
-const saved=localStorage.getItem('aiclient2api_trace_token');
-if(saved)window.location.href='/logs?token='+encodeURIComponent(saved);
 document.getElementById('tokenIn').addEventListener('keydown',e=>{if(e.key==='Enter')doLogin()});
+
+async function validateTraceToken(t){
+  if(!t)return false;
+  try{
+    const r=await fetch('/api/stats?token='+encodeURIComponent(t));
+    return r.ok;
+  }catch{return false}
+}
+
+/** 避免：localStorage 里无效 token → 反复 /logs?token=… → 仍返回本页 → 无限重定向 */
+(async function boot(){
+  const params=new URLSearchParams(window.location.search);
+  const urlToken=params.get('token');
+
+  if(urlToken){
+    if(await validateTraceToken(urlToken)){
+      localStorage.setItem('aiclient2api_trace_token',urlToken);
+      window.location.replace('/logs?token='+encodeURIComponent(urlToken));
+      return;
+    }
+    const savedTry=localStorage.getItem('aiclient2api_trace_token');
+    if(savedTry&&savedTry!==urlToken&&await validateTraceToken(savedTry)){
+      window.location.replace('/logs?token='+encodeURIComponent(savedTry));
+      return;
+    }
+    localStorage.removeItem('aiclient2api_trace_token');
+    if(window.history.replaceState){
+      window.history.replaceState({},'','/logs');
+    }
+  }
+
+  const saved=localStorage.getItem('aiclient2api_trace_token');
+  if(saved){
+    const ok=await validateTraceToken(saved);
+    if(ok){
+      window.location.replace('/logs?token='+encodeURIComponent(saved));
+      return;
+    }
+    localStorage.removeItem('aiclient2api_trace_token');
+  }
+})();
+
 async function doLogin(){
-  const token=document.getElementById('tokenIn').value.trim();if(!token)return;
-  try{const r=await fetch('/api/stats?token='+encodeURIComponent(token));
-  if(r.ok){localStorage.setItem('aiclient2api_trace_token',token);window.location.href='/logs?token='+encodeURIComponent(token)}
-  else{document.getElementById('errMsg').style.display='block'}}
-  catch{document.getElementById('errMsg').style.display='block'}
+  const token=document.getElementById('tokenIn').value.trim();
+  if(!token)return;
+  document.getElementById('errMsg').style.display='none';
+  try{
+    const r=await fetch('/api/stats?token='+encodeURIComponent(token));
+    if(r.ok){
+      localStorage.setItem('aiclient2api_trace_token',token);
+      window.location.href='/logs?token='+encodeURIComponent(token);
+    }else{
+      localStorage.removeItem('aiclient2api_trace_token');
+      document.getElementById('errMsg').style.display='block';
+    }
+  }catch{
+    document.getElementById('errMsg').style.display='block';
+  }
 }
 </script>
 </body>

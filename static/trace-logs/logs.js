@@ -10,9 +10,9 @@ let reqs=[],rmap={},logs=[],selId=null,cFil='all',cLv='all',sq='',curTab='logs',
 const PC={receive:'var(--blue)',convert:'var(--cyan)',send:'var(--purple)',response:'var(--purple)',thinking:'#a855f7',refusal:'var(--yellow)',retry:'var(--yellow)',truncation:'var(--yellow)',continuation:'var(--yellow)',toolparse:'var(--orange)',sanitize:'var(--orange)',stream:'var(--green)',complete:'var(--green)',error:'var(--red)',intercept:'var(--pink)',auth:'var(--t3)'};
 
 // ===== Token Auth =====
+// 未校验前勿写入 localStorage，避免错误 ?token= 污染存储并导致登录页与 /logs 间死循环
 const urlToken = new URLSearchParams(window.location.search).get('token');
-if (urlToken) localStorage.setItem('aiclient2api_trace_token', urlToken);
-const authToken = localStorage.getItem('aiclient2api_trace_token') || '';
+const authToken = (urlToken || localStorage.getItem('aiclient2api_trace_token') || '');
 function authQ(base) { return authToken ? (base.includes('?') ? base + '&token=' : base + '?token=') + encodeURIComponent(authToken) : base; }
 function logoutBtn() {
   if (authToken) {
@@ -28,7 +28,12 @@ function logoutBtn() {
 async function init(){
   try{
     const[a,b]=await Promise.all([fetch(authQ('/api/requests?limit=100')),fetch(authQ('/api/logs?limit=500'))]);
-    if (a.status === 401) { localStorage.removeItem('aiclient2api_trace_token'); window.location.href = '/logs'; return; }
+    if (a.status === 401 || b.status === 401) {
+      localStorage.removeItem('aiclient2api_trace_token');
+      window.location.replace('/logs');
+      return;
+    }
+    if (authToken) localStorage.setItem('aiclient2api_trace_token', authToken);
     reqs=await a.json();logs=await b.json();rmap={};reqs.forEach(r=>rmap[r.requestId]=r);
     renderRL();updCnt();updStats();
     // 默认显示实时日志流
