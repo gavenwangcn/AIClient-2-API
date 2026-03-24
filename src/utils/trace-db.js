@@ -1,5 +1,5 @@
 /**
- * SQLite 持久化层（与 cursor2api logger-db 对齐）
+ * SQLite 持久化层（全链路日志）
  */
 import Database from 'better-sqlite3';
 import { mkdirSync, existsSync } from 'fs';

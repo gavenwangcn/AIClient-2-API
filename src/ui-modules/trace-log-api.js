@@ -1,5 +1,5 @@
 /**
- * 全链路日志 HTTP 路由（与 cursor2api log-viewer 对齐）
+ * 全链路日志 HTTP 路由（聚合代理日志视图）
  */
 import { readFileSync, existsSync } from 'fs';
 import path from 'path';

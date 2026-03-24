@@ -1,5 +1,5 @@
 /**
- * API 全链路追踪日志（与 cursor2api logger 对齐，SQLite 持久化）
+ * API 全链路追踪日志（聚合代理，SQLite 持久化）
  */
 import { EventEmitter } from 'events';
 import {
@@ -81,7 +81,8 @@ function assessCompletionOutcome(summary, payload, stopReason) {
         reasonParts.push('模型声称工具不可用，未执行实际工具调用');
     }
 
-    const truncatedWithoutRecovery = stopReason === 'max_tokens' && summary.continuationCount === 0;
+    const truncatedWithoutRecovery = (stopReason === 'max_tokens' || stopReason === 'length')
+        && summary.continuationCount === 0;
     if (truncatedWithoutRecovery) {
         issueTags.push('truncated_output');
         reasonParts.push('响应触发 max_tokens 且未自动续写');
@@ -149,17 +150,63 @@ function extractGeminiParts(parts) {
     }).filter(Boolean).join('\n');
 }
 
+/** Responses / Codex：从 input 条目中抽取文本（与 ProviderStrategy 逻辑对齐） */
+function textFromResponsesInputItem(item) {
+    if (!item || typeof item !== 'object') return '';
+    if (typeof item.content === 'string') return item.content;
+    if (Array.isArray(item.content)) {
+        return item.content.map((c) => c.text || c.output_text || '').filter(Boolean).join('\n');
+    }
+    if (typeof item.text === 'string') return item.text;
+    return '';
+}
+
+/**
+ * 将 Responses 形态 input 转为与 messages 相同结构的预览行，供工具指令占用与列表展示
+ */
+function buildPseudoMessagesFromResponsesInput(input, instructions) {
+    const MAX_MSG = 100000;
+    const rows = [];
+    if (typeof instructions === 'string' && instructions.length > 0) {
+        const t = instructions.length > MAX_MSG ? `${instructions.substring(0, MAX_MSG)}\n... [截断]` : instructions;
+        rows.push({
+            role: 'system',
+            contentPreview: t,
+            contentLength: instructions.length,
+            hasImages: false,
+        });
+    }
+    if (typeof input === 'string') {
+        const fullContent = input.length > MAX_MSG ? `${input.substring(0, MAX_MSG)}\n... [截断]` : input;
+        rows.push({ role: 'user', contentPreview: fullContent, contentLength: input.length, hasImages: false });
+        return rows;
+    }
+    if (!Array.isArray(input)) return rows;
+    for (const item of input) {
+        const role = item.role || 'user';
+        const text = textFromResponsesInputItem(item);
+        const fullContent = text.length > MAX_MSG ? `${text.substring(0, MAX_MSG)}\n... [截断]` : text;
+        rows.push({ role: role || 'user', contentPreview: fullContent, contentLength: text.length, hasImages: false });
+    }
+    return rows;
+}
+
 export function countMessagesInBody(body) {
     if (!body || typeof body !== 'object') return 0;
     if (Array.isArray(body.messages)) return body.messages.length;
     if (Array.isArray(body.contents)) return body.contents.length;
+    if (typeof body.input === 'string') return 1;
+    if (Array.isArray(body.input)) return body.input.length;
     return 0;
 }
 
 export function countToolsInBody(body) {
     if (!body || typeof body !== 'object') return 0;
-    if (Array.isArray(body.tools)) return body.tools.length;
-    return 0;
+    let n = 0;
+    if (Array.isArray(body.tools)) n += body.tools.length;
+    // OpenAI 旧版 function_call
+    if (Array.isArray(body.functions)) n += body.functions.length;
+    return n;
 }
 
 function persistRequest(summary, payload) {
@@ -517,6 +564,10 @@ export class RequestLogger {
                     fullContent = text.length > MAX_MSG ? `${text.substring(0, MAX_MSG)}\n... [截断]` : text;
                     contentLength = text.length;
                     if (hasImages) fullContent += `\n[+${imageParts.length} images]`;
+                } else if (m.content && typeof m.content === 'object') {
+                    const text = extractTextParts(m.content);
+                    fullContent = text.length > MAX_MSG ? `${text.substring(0, MAX_MSG)}\n... [截断]` : text;
+                    contentLength = text.length;
                 }
                 return { role: m.role, contentPreview: fullContent, contentLength, hasImages };
             });
@@ -544,6 +595,11 @@ export class RequestLogger {
                 name: t.name || t.function?.name || 'unknown',
                 description: t.description || t.function?.description || '',
             }));
+        } else if (Array.isArray(body.functions)) {
+            this._payload.tools = body.functions.map((f) => ({
+                name: f.name || 'unknown',
+                description: f.description || '',
+            }));
         }
         if (!this._payload.messages && Array.isArray(body.contents)) {
             const MAX_MSG = 100000;
@@ -559,10 +615,23 @@ export class RequestLogger {
                 this._summary.title = t.length > 80 ? `${t.substring(0, 77)}...` : t;
             }
         }
+        // OpenAI Responses / Codex：客户端或上游使用 input 而非 messages
+        if (!this._payload.messages && body.input !== undefined) {
+            this._payload.messages = buildPseudoMessagesFromResponsesInput(body.input, body.instructions);
+            const userRows = this._payload.messages.filter((m) => m.role === 'user');
+            if (userRows.length > 0) {
+                const last = userRows[userRows.length - 1];
+                let t = last.contentPreview || '';
+                t = t.replace(/\s+/g, ' ').trim();
+                if (t.length > 0) {
+                    this._summary.title = t.length > 80 ? `${t.substring(0, 77)}...` : t;
+                }
+            }
+        }
         this._payload.originalRequest = sanitizeForStorage(body);
     }
 
-    /** 记录发给上游提供商的请求体（对应 cursor2api 的 cursorRequest） */
+    /** 记录发给上游提供商的请求体（转换后 upstream 请求快照） */
     recordUpstreamRequest(body, toProvider) {
         const msgs = [];
         if (Array.isArray(body.messages)) {
@@ -581,6 +650,15 @@ export class RequestLogger {
                     role: c.role || 'user',
                     contentPreview: text.length > 100000 ? `${text.slice(0, 100000)}\n... [截断]` : text,
                     contentLength: text.length,
+                });
+            }
+        } else if (body.input !== undefined) {
+            const pseudo = buildPseudoMessagesFromResponsesInput(body.input, body.instructions);
+            for (const m of pseudo) {
+                msgs.push({
+                    role: m.role || 'user',
+                    contentPreview: m.contentPreview,
+                    contentLength: m.contentLength,
                 });
             }
         }
@@ -619,17 +697,22 @@ export class RequestLogger {
     complete(responseChars, stopReason) {
         if (this._summary.status !== 'processing') return;
         this.endPhase();
-        const assessment = assessCompletionOutcome(this._summary, this._payload, stopReason);
+        // 展示与落库用有效停止原因：未解析到时，有输出则视为正常结束 stop
+        const effectiveStop = stopReason !== undefined && stopReason !== null && stopReason !== ''
+            ? stopReason
+            : (responseChars > 0 ? 'stop' : undefined);
+        const assessment = assessCompletionOutcome(this._summary, this._payload, effectiveStop);
         this._summary.endTime = Date.now();
         this._summary.status = assessment.status;
         this._summary.statusReason = assessment.statusReason;
         this._summary.issueTags = assessment.issueTags;
         this._summary.responseChars = responseChars;
-        this._summary.stopReason = stopReason;
+        this._summary.stopReason = effectiveStop;
         const duration = this._summary.endTime - this._summary.startTime;
+        const stopLabel = effectiveStop !== undefined ? effectiveStop : 'n/a';
         const completionMessage = assessment.status === 'degraded'
-            ? `降级完成 (${duration}ms, ${responseChars} chars, stop=${stopReason})${assessment.statusReason ? ` - ${assessment.statusReason}` : ''}`
-            : `完成 (${duration}ms, ${responseChars} chars, stop=${stopReason})`;
+            ? `降级完成 (${duration}ms, ${responseChars} chars, stop=${stopLabel})${assessment.statusReason ? ` - ${assessment.statusReason}` : ''}`
+            : `完成 (${duration}ms, ${responseChars} chars, stop=${stopLabel})`;
         this._log(assessment.status === 'degraded' ? 'warn' : 'info', 'System', 'complete', completionMessage);
         logEmitter.emit('summary', this._summary);
         persistRequest(this._summary, this._payload);

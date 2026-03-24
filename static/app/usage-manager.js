@@ -680,6 +680,13 @@ function renderUsageDetails(usage, providerType) {
         container.appendChild(breakdownSection);
     }
 
+    if (usage.localOnly && (!usage.usageBreakdown || usage.usageBreakdown.length === 0)) {
+        const note = document.createElement('div');
+        note.className = 'usage-section usage-local-only-hint';
+        note.innerHTML = `<p style="color:var(--text-secondary,#64748b);font-size:12px;margin:8px 0 0;line-height:1.5">该供应商未接入远程配额 API，用量请在上游控制台查看；此处仍展示号池健康与本地统计。</p>`;
+        container.appendChild(note);
+    }
+
     return container;
 }
 
@@ -893,12 +900,17 @@ function getProviderDisplayName(providerType) {
     }
 
     const names = {
+        'forward-api': 'NewAPI / Forward',
         'claude-kiro-oauth': 'Claude Kiro OAuth',
         'gemini-cli-oauth': 'Gemini CLI OAuth',
         'gemini-antigravity': 'Gemini Antigravity',
-        'openai-codex-oauth': 'Codex OAuth',
+        'openai-codex-oauth': 'OpenAI Codex OAuth',
         'openai-qwen-oauth': 'Qwen OAuth',
-        'grok-custom': 'Grok Reverse'
+        'openai-iflow': 'iFlow API',
+        'grok-custom': 'Grok Reverse',
+        'openai-custom': 'OpenAI Custom',
+        'claude-custom': 'Claude Custom',
+        'openaiResponses-custom': 'OpenAI Responses',
     };
     return names[providerType] || providerType;
 }
@@ -919,12 +931,17 @@ function getProviderIcon(providerType) {
     }
 
     const icons = {
+        'forward-api': 'fas fa-share-square',
         'claude-kiro-oauth': 'fas fa-robot',
         'gemini-cli-oauth': 'fas fa-gem',
         'gemini-antigravity': 'fas fa-rocket',
         'openai-codex-oauth': 'fas fa-terminal',
         'openai-qwen-oauth': 'fas fa-code',
-        'grok-custom': 'fas fa-brain'
+        'openai-iflow': 'fas fa-stream',
+        'grok-custom': 'fas fa-brain',
+        'openai-custom': 'fas fa-microchip',
+        'claude-custom': 'fas fa-brain',
+        'openaiResponses-custom': 'fas fa-reply-all',
     };
     return icons[providerType] || 'fas fa-server';
 }

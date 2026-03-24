@@ -19,6 +19,9 @@ services:
       # 可选：显式指定库路径（与上面卷一致时保持默认即可）
       - TRACE_LOG_DB_PATH=/app/logs/aiclient2api-trace.db
       - TRACE_LOG_MAX_DAYS=30
+      # 可选：非流式自动续写（max_tokens/length 截断时），0=关闭
+      # - CONTINUATION_MAX_ROUNDS=2
+      # - CONTINUATION_PROMPT=Continue
     healthcheck:
       test: ["CMD", "node", "healthcheck.js"]
       interval: 30s

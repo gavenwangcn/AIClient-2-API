@@ -79,7 +79,7 @@ export function createRequestHandler(config, providerPoolManager) {
                     return;
                 }
 
-                // 全链路日志页与 API（与 cursor2api /logs 对齐，鉴权使用 REQUIRED_API_KEY）
+                // 全链路日志页与 API（鉴权使用 REQUIRED_API_KEY）
                 const traceHandled = await handleTraceLogRequest(method, path, req, res, currentConfig);
                 if (traceHandled) return;
 

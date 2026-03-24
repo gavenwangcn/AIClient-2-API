@@ -88,6 +88,46 @@ export const PROVIDER_MAPPINGS = [
         displayName: 'Grok Reverse',
         needsProjectId: false,
         urlKeys: ['GROK_BASE_URL', 'GROK_CF_CLEARANCE', 'GROK_USER_AGENT']
+    },
+    {
+        dirName: 'openai-custom',
+        patterns: ['configs/openai-custom/', '/openai-custom/'],
+        providerType: 'openai-custom',
+        credPathKey: 'OPENAI_API_KEY',
+        defaultCheckModel: 'gpt-4o',
+        displayName: 'OpenAI Custom',
+        needsProjectId: false,
+        urlKeys: ['OPENAI_BASE_URL']
+    },
+    {
+        dirName: 'claude-custom',
+        patterns: ['configs/claude-custom/', '/claude-custom/'],
+        providerType: 'claude-custom',
+        credPathKey: 'CLAUDE_API_KEY',
+        defaultCheckModel: 'claude-sonnet-4-5',
+        displayName: 'Claude Custom',
+        needsProjectId: false,
+        urlKeys: ['CLAUDE_BASE_URL']
+    },
+    {
+        dirName: 'openai-responses',
+        patterns: ['configs/openai-responses/', '/openai-responses/'],
+        providerType: 'openaiResponses-custom',
+        credPathKey: 'OPENAI_API_KEY',
+        defaultCheckModel: 'gpt-4o',
+        displayName: 'OpenAI Responses',
+        needsProjectId: false,
+        urlKeys: ['OPENAI_BASE_URL']
+    },
+    {
+        dirName: 'forward',
+        patterns: ['configs/forward/', '/forward/'],
+        providerType: 'forward-api',
+        credPathKey: 'FORWARD_BASE_URL',
+        defaultCheckModel: 'gpt-4o-mini',
+        displayName: 'Forward API',
+        needsProjectId: false,
+        urlKeys: ['FORWARD_BASE_URL', 'FORWARD_API_KEY']
     }
 ];
 

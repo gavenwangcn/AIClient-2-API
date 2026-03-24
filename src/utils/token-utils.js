@@ -168,3 +168,86 @@ export function countTokensAnthropic(requestBody) {
 
     return { input_tokens: countTextTokens(allText) + extraTokens };
 }
+
+/**
+ * 全链路追踪：按上游实际请求体估算输入 token（Gemini `contents` / OpenAI·Claude `messages` 等）
+ */
+export function estimateTraceInputTokens(requestBody) {
+    if (!requestBody || typeof requestBody !== 'object') return 0;
+
+    if (Array.isArray(requestBody.contents)) {
+        let allText = '';
+        for (const c of requestBody.contents) {
+            if (c.parts && Array.isArray(c.parts)) {
+                for (const p of c.parts) {
+                    if (p.text) allText += p.text;
+                    if (p.functionCall) allText += JSON.stringify(p.functionCall);
+                    if (p.function_call) allText += JSON.stringify(p.function_call);
+                    if (p.inlineData?.data) {
+                        allText += p.inlineData.data;
+                    }
+                }
+            }
+        }
+        if (requestBody.systemInstruction?.parts) {
+            for (const p of requestBody.systemInstruction.parts) {
+                if (p.text) allText += p.text;
+            }
+        }
+        if (Array.isArray(requestBody.tools)) {
+            allText += JSON.stringify(requestBody.tools);
+        }
+        if (requestBody.generationConfig && typeof requestBody.generationConfig === 'object') {
+            allText += JSON.stringify(requestBody.generationConfig);
+        }
+        if (requestBody.safetySettings) {
+            allText += JSON.stringify(requestBody.safetySettings);
+        }
+        return countTextTokens(allText);
+    }
+
+    // OpenAI Responses / Codex 等：使用 input + instructions，而非 messages
+    if (requestBody.input !== undefined || typeof requestBody.instructions === 'string') {
+        return estimateResponsesStyleInputTokens(requestBody);
+    }
+
+    return estimateInputTokens(requestBody);
+}
+
+/**
+ * Responses API 形态：input 为 string 或 item 数组，另有 instructions
+ */
+function estimateResponsesStyleInputTokens(body) {
+    let allText = '';
+    if (typeof body.instructions === 'string') {
+        allText += body.instructions;
+    }
+    if (typeof body.input === 'string') {
+        allText += body.input;
+    } else if (Array.isArray(body.input)) {
+        for (const item of body.input) {
+            allText += textFromResponsesInputItem(item);
+        }
+    }
+    if (Array.isArray(body.tools)) {
+        allText += JSON.stringify(body.tools);
+    }
+    return countTextTokens(allText);
+}
+
+function textFromResponsesInputItem(item) {
+    if (!item || typeof item !== 'object') return '';
+    if (typeof item.content === 'string') return item.content;
+    if (Array.isArray(item.content)) {
+        return item.content.map((c) => c.text || c.output_text || '').filter(Boolean).join('\n');
+    }
+    if (typeof item.text === 'string') return item.text;
+    return '';
+}
+
+/**
+ * 全链路追踪：按聚合后的输出文本估算输出 token
+ */
+export function estimateTraceOutputTokens(outputText) {
+    return countTextTokens(outputText || '');
+}

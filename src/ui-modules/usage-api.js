@@ -6,7 +6,22 @@ import { readUsageCache, writeUsageCache, readProviderUsageCache, updateProvider
 import { PROVIDER_MAPPINGS } from '../utils/provider-utils.js';
 import path from 'path';
 
-const supportedProviders = ['claude-kiro-oauth', 'gemini-cli-oauth', 'gemini-antigravity', 'openai-codex-oauth', 'grok-custom'];
+/**
+ * 与 static/app/utils.js getProviderConfigs 中的 id 一致，确保用量页、路由节点与代理供应商不遗漏
+ */
+const supportedProviders = [
+    'forward-api',
+    'gemini-cli-oauth',
+    'gemini-antigravity',
+    'claude-kiro-oauth',
+    'openai-codex-oauth',
+    'openai-qwen-oauth',
+    'openai-iflow',
+    'grok-custom',
+    'openai-custom',
+    'claude-custom',
+    'openaiResponses-custom',
+];
 
 
 /**
@@ -190,8 +205,44 @@ async function getAdapterUsage(adapter, providerType) {
         }
         throw new Error('This adapter does not support usage query');
     }
-    
+
+    // 以下供应商多数无统一远程「配额」API：优先尝试适配器 getUsageLimits；否则返回本地占位（节点仍显示健康/次数等）
+    const localOnlyTypes = [
+        'openai-qwen-oauth',
+        'openai-iflow',
+        'openai-custom',
+        'claude-custom',
+        'openaiResponses-custom',
+        'forward-api',
+    ];
+    if (localOnlyTypes.includes(providerType)) {
+        if (typeof adapter.getUsageLimits === 'function') {
+            try {
+                const rawUsage = await adapter.getUsageLimits();
+                if (rawUsage && Array.isArray(rawUsage.usageBreakdown)) {
+                    return rawUsage;
+                }
+            } catch (e) {
+                logger.debug(`[Usage API] getUsageLimits optional for ${providerType}: ${e.message}`);
+            }
+        }
+        return formatLocalOnlyUsage(providerType);
+    }
+
     throw new Error(`Unsupported provider type: ${providerType}`);
+}
+
+/**
+ * 无远程用量条目的占位结构（前端可渲染为成功、无进度条）
+ */
+function formatLocalOnlyUsage(providerType) {
+    return {
+        usageBreakdown: [],
+        subscription: { title: null },
+        user: { email: null },
+        localOnly: true,
+        note: `provider:${providerType}`,
+    };
 }
 
 /**

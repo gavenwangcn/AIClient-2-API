@@ -7,6 +7,13 @@ import { convertData, getOpenAIStreamChunkStop } from '../convert/convert.js';
 import { ProviderStrategyFactory } from './provider-strategies.js';
 import { getPluginManager } from '../core/plugin-manager.js';
 import { createApiTraceLogger, countMessagesInBody, countToolsInBody } from './api-trace-logger.js';
+import { estimateTraceInputTokens, estimateTraceOutputTokens } from './token-utils.js';
+import {
+    appendContinuationRound,
+    extractNativeStopReason,
+    isTruncationStopReason,
+    patchNativeMergedContent,
+} from './continuation-utils.js';
 
 // ==================== 网络错误处理 ====================
 
@@ -436,9 +443,21 @@ export async function handleStreamRequest(res, service, model, requestBody, from
                     }
                 }
 
-                if (chunk?.choices?.[0]?.finish_reason) stopReason = chunk.choices[0].finish_reason;
-                if (chunk?.type === 'message_delta' && chunk.delta?.stop_reason) stopReason = chunk.delta.stop_reason;
-                if (chunk?.candidates?.[0]?.finishReason) stopReason = chunk.candidates[0].finishReason;
+                // 提取结束原因：遍历所有 choice（最后一块有时不在 choices[0]）
+                if (Array.isArray(chunk.choices)) {
+                    for (const choice of chunk.choices) {
+                        if (choice?.finish_reason) {
+                            stopReason = choice.finish_reason;
+                            break;
+                        }
+                    }
+                }
+                if (chunk?.type === 'message_delta' && chunk.delta?.stop_reason) {
+                    stopReason = chunk.delta.stop_reason;
+                }
+                if (chunk?.candidates?.[0]?.finishReason) {
+                    stopReason = chunk.candidates[0].finishReason;
+                }
 
                 // 防止重复发送结束标志
                 // OpenAI: choices[].finish_reason
@@ -484,6 +503,11 @@ export async function handleStreamRequest(res, service, model, requestBody, from
                 }
                 // logger.info(`data: ${JSON.stringify(chunk)}\n`);
             }
+        }
+
+        // 上游未带 finish_reason 时（部分转换路径最后一块无该字段），成功且有输出则记为 stop
+        if (stopReason === undefined && fullResponseText.length > 0) {
+            stopReason = 'stop';
         }
 
         // 流式请求成功完成，统计使用次数，错误次数重置为0
@@ -676,7 +700,10 @@ export async function handleStreamRequest(res, service, model, requestBody, from
             traceFin.endPhase();
             traceFin.recordRawResponse(fullResponseText);
             traceFin.recordFinalResponse(fullResponseText);
-            traceFin.updateSummary({ toolCallsDetected: hasToolCall ? 1 : 0 });
+            traceFin.updateSummary({
+                toolCallsDetected: hasToolCall ? 1 : 0,
+                outputTokens: estimateTraceOutputTokens(fullResponseText),
+            });
             traceFin.complete(fullResponseText.length, stopReason);
         }
         // fs.writeFile('oldResponseChunk'+Date.now()+'.json', fullOldResponseJson);
@@ -697,22 +724,64 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
         const needsConversion = getProtocolPrefix(fromProvider) !== getProtocolPrefix(toProvider);
         requestBody.model = model;
         const trace = CONFIG?._apiTraceLogger;
-        const tUpstream = Date.now();
-        // fs.writeFile('oldRequest'+Date.now()+'.json', JSON.stringify(requestBody));
-        const nativeResponse = await service.generateContent(model, requestBody);
-        if (trace && trace.isProcessing()) {
-            trace.recordUpstreamApiTime(tUpstream);
-            trace.endPhase();
-            trace.startPhase('response', '非流式响应');
-            trace.recordTTFT();
+        const protocolPrefix = getProtocolPrefix(toProvider);
+        const maxCont = Math.max(0, Number(CONFIG?.CONTINUATION_MAX_ROUNDS ?? 0));
+        const continuationPrompt = String(CONFIG?.CONTINUATION_PROMPT ?? 'Continue').trim() || 'Continue';
+
+        let currentBody = requestBody;
+        let continuationCount = 0;
+        let accumulatedText = '';
+        let lastNative = null;
+        let lastStopRaw;
+        let roundIndex = 0;
+
+        while (true) {
+            const tUpstream = Date.now();
+            const nativeResponse = await service.generateContent(model, currentBody);
+            if (roundIndex === 0 && trace && trace.isProcessing()) {
+                trace.recordUpstreamApiTime(tUpstream);
+                trace.endPhase();
+                trace.startPhase('response', '非流式响应');
+                trace.recordTTFT();
+            }
+            const roundText = extractResponseText(nativeResponse, toProvider);
+            accumulatedText += roundText;
+            lastNative = nativeResponse;
+            lastStopRaw = extractNativeStopReason(nativeResponse);
+
+            const nextBody = appendContinuationRound(protocolPrefix, currentBody, roundText, continuationPrompt);
+            if (maxCont > 0 && continuationCount < maxCont && isTruncationStopReason(lastStopRaw) && nextBody && roundText.length > 0) {
+                continuationCount++;
+                currentBody = nextBody;
+                if (trace) trace.updateSummary({ continuationCount });
+                roundIndex++;
+                logger.info(`[Continuation] 非流式续写第 ${continuationCount}/${maxCont} 次，上轮 stop=${lastStopRaw}`);
+                continue;
+            }
+            break;
         }
-        const responseText = extractResponseText(nativeResponse, toProvider);
+
+        let mergedNative = patchNativeMergedContent(protocolPrefix, lastNative, accumulatedText);
+        if (continuationCount > 0 && mergedNative && typeof mergedNative === 'object' && !isTruncationStopReason(lastStopRaw)) {
+            if ((protocolPrefix === 'openai' || protocolPrefix === 'grok' || protocolPrefix === 'forward' || protocolPrefix === 'codex') && mergedNative.choices?.[0]) {
+                mergedNative.choices[0].finish_reason = 'stop';
+            }
+            if ((protocolPrefix === 'openaiResponses' || protocolPrefix === 'codex') && mergedNative.status === 'incomplete') {
+                mergedNative.status = 'completed';
+                mergedNative.incomplete_details = null;
+            }
+            if (protocolPrefix === 'gemini' && mergedNative.candidates?.[0]) {
+                mergedNative.candidates[0].finishReason = 'STOP';
+            }
+        }
+
+        const responseText = accumulatedText;
 
         // Convert the response back to the client's format (fromProvider), if necessary.
-        let clientResponse = nativeResponse;
+        let clientResponse = mergedNative;
         if (needsConversion) {
             logger.info(`[Response Convert] Converting response from ${toProvider} to ${fromProvider}`);
-            clientResponse = convertData(nativeResponse, 'response', toProvider, fromProvider, model);
+            clientResponse = convertData(mergedNative, 'response', toProvider, fromProvider, model);
         }
 
         // 监控钩子：非流式响应
@@ -720,7 +789,7 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
             try {
                 const pluginManager = getPluginManager();
                 await pluginManager.executeHook('onUnaryResponse', {
-                    nativeResponse,
+                    nativeResponse: mergedNative,
                     clientResponse,
                     fromProvider,
                     toProvider,
@@ -737,7 +806,9 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
             trace.recordRawResponse(responseText);
             trace.recordFinalResponse(responseText);
             trace.endPhase();
-            trace.complete(responseText.length, undefined);
+            const unaryStop = extractUnaryStopReason(clientResponse) ?? (responseText.length > 0 ? 'stop' : undefined);
+            trace.updateSummary({ outputTokens: estimateTraceOutputTokens(responseText) });
+            trace.complete(responseText.length, unaryStop);
         }
         // fs.writeFile('oldResponse'+Date.now()+'.json', JSON.stringify(clientResponse));
         
@@ -1053,6 +1124,7 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
     trace.startPhase('convert', '协议转换');
     trace.endPhase();
     trace.recordUpstreamRequest(processedRequestBody, toProvider);
+    trace.updateSummary({ inputTokens: estimateTraceInputTokens(processedRequestBody) });
     trace.startPhase('send', '调用上游');
     trace.info('Handler', 'receive', `→ ${toProvider} (${fromProvider})`);
     CONFIG._apiTraceLogger = trace;
@@ -1106,6 +1178,20 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
 function _extractModelAndStreamInfo(req, requestBody, fromProvider) {
     const strategy = ProviderStrategyFactory.getStrategy(getProtocolPrefix(fromProvider));
     return strategy.extractModelAndStreamInfo(req, requestBody);
+}
+
+/** 非流式响应中解析 stop / finish_reason，供追踪日志使用 */
+function extractUnaryStopReason(clientResponse) {
+    if (!clientResponse || typeof clientResponse !== 'object') return undefined;
+    const c0 = clientResponse.choices?.[0];
+    if (c0?.finish_reason) return c0.finish_reason;
+    const fr = clientResponse.candidates?.[0]?.finishReason;
+    if (fr) return fr;
+    if (typeof clientResponse.stop_reason === 'string') return clientResponse.stop_reason;
+    if (clientResponse.status === 'incomplete' && clientResponse.incomplete_details?.reason) {
+        return clientResponse.incomplete_details.reason;
+    }
+    return undefined;
 }
 
 async function _applySystemPromptFromFile(config, requestBody, toProvider) {

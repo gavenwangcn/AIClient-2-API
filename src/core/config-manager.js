@@ -91,7 +91,11 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
         TLS_SIDECAR_BINARY_PATH: null, // 自定义二进制路径（默认自动搜索）
         TLS_SIDECAR_PROXY_URL: null,   // TLS Sidecar 专用的上游代理地址
         TRACE_LOG_DB_PATH: './logs/aiclient2api-trace.db',
-        TRACE_LOG_MAX_DAYS: 30
+        TRACE_LOG_MAX_DAYS: 30,
+        /** 非流式：因 max_tokens/length 截断时最多额外续写请求次数（0=关闭）。流式暂不续写。 */
+        CONTINUATION_MAX_ROUNDS: 0,
+        /** 续写时追加的 user 文案 */
+        CONTINUATION_PROMPT: 'Continue',
     };
 
     let currentConfig = { ...defaultConfig };
@@ -206,6 +210,13 @@ export async function initializeConfig(args = process.argv.slice(2), configFileP
     if (process.env.TRACE_LOG_MAX_DAYS) {
         const n = parseInt(process.env.TRACE_LOG_MAX_DAYS, 10);
         if (!Number.isNaN(n) && n > 0) CONFIG.TRACE_LOG_MAX_DAYS = n;
+    }
+    if (process.env.CONTINUATION_MAX_ROUNDS !== undefined) {
+        const n = parseInt(process.env.CONTINUATION_MAX_ROUNDS, 10);
+        if (!Number.isNaN(n) && n >= 0) CONFIG.CONTINUATION_MAX_ROUNDS = n;
+    }
+    if (process.env.CONTINUATION_PROMPT) {
+        CONFIG.CONTINUATION_PROMPT = process.env.CONTINUATION_PROMPT;
     }
 
     // Initialize logger
