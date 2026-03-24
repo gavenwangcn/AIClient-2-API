@@ -45,6 +45,7 @@ async function validateTraceToken(t){
 
 /** 避免：localStorage 里无效 token → 反复 /logs?token=… → 仍返回本页 → 无限重定向 */
 (async function boot(){
+  let showInvalidHint=false;
   const params=new URLSearchParams(window.location.search);
   const urlToken=params.get('token');
 
@@ -63,6 +64,7 @@ async function validateTraceToken(t){
     if(window.history.replaceState){
       window.history.replaceState({},'','/logs');
     }
+    showInvalidHint=true;
   }
 
   const saved=localStorage.getItem('aiclient2api_trace_token');
@@ -73,6 +75,12 @@ async function validateTraceToken(t){
       return;
     }
     localStorage.removeItem('aiclient2api_trace_token');
+    showInvalidHint=true;
+  }
+
+  if(showInvalidHint){
+    const el=document.getElementById('errMsg');
+    if(el)el.style.display='block';
   }
 })();
 
