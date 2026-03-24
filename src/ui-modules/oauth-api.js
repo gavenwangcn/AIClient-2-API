@@ -82,12 +82,13 @@ export async function handleGenerateAuthUrl(req, res, currentConfig, providerTyp
         return true;
         
     } catch (error) {
-        logger.error(`[UI API] Failed to generate auth URL for ${providerType}:`, error);
+        const errMsg = error && typeof error.message === 'string' ? error.message : String(error);
+        logger.error(`[UI API] Failed to generate auth URL for ${providerType}: ${errMsg}`);
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({
             error: {
-                message: `Failed to generate auth URL: ${error.message}`
-            }
+                message: `Failed to generate auth URL: ${errMsg}`,
+            },
         }));
         return true;
     }

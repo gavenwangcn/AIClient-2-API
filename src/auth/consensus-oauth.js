@@ -40,13 +40,28 @@ function summarizeMcporterOutputBuffer(buf) {
 /**
  * 从 mcporter --log-level debug 输出中提取 Consensus 授权页 URL
  * 示例：visit https://consensus.app/oauth/authorize/?response_type=code&... manually.
+ * 部分环境会把 URL 折行，先压成单行再匹配。
  */
 export function extractConsensusAuthorizeUrl(text) {
     if (!text || typeof text !== 'string') return null;
-    // mcporter 日志示例：... visit https://consensus.app/oauth/authorize/?response_type=code&... manually.
-    const re = /https:\/\/consensus\.app\/oauth\/authorize\/?[^\s"'<>]+/i;
-    const m = text.match(re);
-    return m ? m[0] : null;
+    const flat = text.replace(/\r?\n/g, ' ').replace(/\s{2,}/g, ' ');
+    const re = /https:\/\/consensus\.app\/oauth\/authorize\/?[^\s"'<>]*/i;
+    const m = flat.match(re);
+    return m ? m[0].trim() : null;
+}
+
+/**
+ * mcporter 已判定 OAuth 失败且不会进入浏览器成功路径（常见于 Docker 内 401/SSE）
+ */
+function isMcporterOAuthTerminalFailure(buf) {
+    if (!buf || buf.length < 80) return false;
+    const lower = buf.toLowerCase();
+    if (!lower.includes('failed to authorize')) return false;
+    return (
+        (lower.includes('sse error') && lower.includes('401')) ||
+        (lower.includes('non-200') && lower.includes('401')) ||
+        /at handleAuth\s*\(/i.test(buf)
+    );
 }
 
 /**
@@ -172,7 +187,10 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
     child.stdout.on('data', (c) => append(c, 'stdout'));
     child.stderr.on('data', (c) => append(c, 'stderr'));
 
+    /** @type {number|null} */
+    let childExitCode = null;
     child.on('exit', (code, signal) => {
+        childExitCode = typeof code === 'number' ? code : -1;
         logger.info(
             `[Consensus OAuth] mcporter auth exited code=${code} signal=${signal || ''} bufferLen=${buffer.length} summary=${JSON.stringify(summarizeMcporterOutputBuffer(buffer))}`
         );
@@ -194,6 +212,22 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
     while (Date.now() < deadline) {
         authUrlCaptured = extractConsensusAuthorizeUrl(buffer);
         if (authUrlCaptured) break;
+        // 子进程退出后 Node 会同步设置 child.exitCode；勿仅依赖 exit 事件回调里写入的变量（事件相对 await 可能滞后，曾导致空等满 urlCaptureTimeoutMs）
+        if (child.exitCode !== null) {
+            childExitCode = child.exitCode;
+            authUrlCaptured = extractConsensusAuthorizeUrl(buffer);
+            if (authUrlCaptured) break;
+            logger.info(
+                `[Consensus OAuth] subprocess ended exitCode=${child.exitCode} bufferLen=${buffer.length}, stop waiting (no parseable authorize URL in output)`
+            );
+            break;
+        }
+        if (isMcporterOAuthTerminalFailure(buffer)) {
+            logger.info(
+                `[Consensus OAuth] detected terminal failure in mcporter output (401/SSE/Failed to authorize), stop waiting`
+            );
+            break;
+        }
         const now = Date.now();
         if (now - lastProgressLog >= 5000) {
             lastProgressLog = now;
@@ -203,6 +237,10 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
             );
         }
         await new Promise((r) => setTimeout(r, 40));
+    }
+
+    if (!authUrlCaptured) {
+        authUrlCaptured = extractConsensusAuthorizeUrl(buffer);
     }
 
     if (authUrlCaptured) {
@@ -219,9 +257,19 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         }
         if (activeConsensusAuthChild === child) activeConsensusAuthChild = null;
         logger.error(`[Consensus OAuth] Log tail (truncated): ${buffer.slice(-2000)}`);
+        const resolvedExit = child.exitCode !== null && child.exitCode !== undefined ? child.exitCode : childExitCode;
+        if (isMcporterOAuthTerminalFailure(buffer) || (resolvedExit !== null && resolvedExit !== 0)) {
+            throw new Error(
+                'Consensus OAuth 失败：mcporter 在打印浏览器授权链接之前已报错（常见为 Streamable HTTP/SSE 返回 401）。' +
+                    '在宿主机上执行与官方一致的命令可成功（无 Docker 网络隔离）：' +
+                    '`/usr/bin/mcporter auth https://mcp.consensus.app/mcp --config <你的 mcporter.json>`，完成后将 `mcporter.json` 挂回容器。' +
+                    '或在 Docker 使用 `network_mode: host` / 将授权回调端口映射到宿主机。' +
+                    ` mcporterExitCode=${resolvedExit ?? 'null'}`
+            );
+        }
         const hint401 =
             /401|unauthorized|Non-200 status/i.test(buffer)
-                ? ' 日志中出现 401 / unauthorized：多为 mcporter 与官方 MCP 在 Streamable HTTP/SSE 握手阶段未进入浏览器 OAuth（可尝试升级镜像内 mcporter：`npm i -g mcporter@latest`）。若在 Docker 内运行，OAuth 回调需落在能访问容器内 127.0.0.1 的环境，或在本机执行 `mcporter auth consensus --config <你的 mcporter.json>` 后将凭据文件挂载进容器。'
+                ? ' 日志中出现 401 / unauthorized：多为 mcporter 与官方 MCP 在 Streamable HTTP/SSE 握手阶段未进入浏览器 OAuth（可尝试升级镜像内 mcporter：`npm i -g mcporter@latest`）。若在 Docker 内运行，OAuth 回调需落在能访问容器内 127.0.0.1 的环境，或在本机执行 `mcporter auth https://mcp.consensus.app/mcp --config <你的 mcporter.json>` 后将凭据文件挂载进容器。'
                 : '';
         throw new Error(
             `未在 mcporter 调试输出中解析到 Consensus 授权链接。请确认可访问 https://mcp.consensus.app/mcp 且 mcporter 版本较新。${hint401}`
