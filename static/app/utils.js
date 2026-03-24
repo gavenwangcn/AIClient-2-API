@@ -188,7 +188,6 @@ function getFieldLabel(key) {
         'IFLOW_BASE_URL': t('modal.provider.field.iflowBaseUrl'),
         'CODEX_BASE_URL': t('modal.provider.field.codexBaseUrl'),
         'CONSENSUS_MCPORTER_CONFIG_PATH': 'mcporter.json 路径',
-        'CONSENSUS_MCPORTER_PATH': 'mcporter 可执行文件路径',
         'CONSENSUS_MCP_URL': 'Consensus MCP URL',
         'CONSENSUS_MCP_SERVER_NAME': 'MCP 服务器名称（mcporter）',
         'GROK_BASE_URL': t('modal.provider.field.grokBaseUrl'),
@@ -378,12 +377,6 @@ function getProviderTypeFields(providerType) {
             }
         ],
         'consensus-mcp-oauth': [
-            {
-                id: 'CONSENSUS_MCPORTER_PATH',
-                label: `mcporter 可执行文件路径 <span class="optional-tag">${t('config.optional')}</span>`,
-                type: 'text',
-                placeholder: '/usr/bin/mcporter（留空则使用全局配置或 PATH）'
-            },
             {
                 id: 'CONSENSUS_MCPORTER_CONFIG_PATH',
                 label: 'mcporter.json 路径',

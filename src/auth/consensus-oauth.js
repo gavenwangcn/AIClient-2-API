@@ -7,7 +7,7 @@ import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 import { autoLinkProviderConfigs } from '../services/service-manager.js';
 import { CONFIG } from '../core/config-manager.js';
 import { normalizePath } from '../utils/provider-utils.js';
-import { resolveMcporterExecutable } from '../providers/consensus/consensus-mcp-utils.js';
+import { getMcporterExecutable } from '../providers/consensus/consensus-mcp-utils.js';
 
 const DEFAULT_MCP_URL = 'https://mcp.consensus.app/mcp';
 const DEFAULT_SERVER_NAME = 'consensus';
@@ -95,10 +95,7 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         ? relConfig
         : path.resolve(process.cwd(), relConfig);
 
-    const oauthMerge = { ...currentConfig };
-    if (options.consensusMcporterPath) oauthMerge.CONSENSUS_MCPORTER_PATH = options.consensusMcporterPath;
-    if (options.CONSENSUS_MCPORTER_PATH) oauthMerge.CONSENSUS_MCPORTER_PATH = options.CONSENSUS_MCPORTER_PATH;
-    const mcporterBin = resolveMcporterExecutable(oauthMerge);
+    const mcporterBin = getMcporterExecutable();
     const mcpUrl = options.consensusMcpUrl || DEFAULT_MCP_URL;
     const serverName = options.consensusServerName || DEFAULT_SERVER_NAME;
     const oauthTimeoutMs = Number(options.oauthTimeout ?? options.consensusOAuthTimeout ?? 120000) || 120000;

@@ -94,8 +94,6 @@ async function loadConfiguration() {
         if (hostEl) hostEl.value = data.HOST || '127.0.0.1';
         if (portEl) portEl.value = data.SERVER_PORT || 3000;
 
-        const consensusMcporterPathEl = document.getElementById('consensusMcporterPath');
-        if (consensusMcporterPathEl) consensusMcporterPathEl.value = data.CONSENSUS_MCPORTER_PATH || '';
         
         if (modelProviderEl) {
             // 处理多选 MODEL_PROVIDER
@@ -325,7 +323,6 @@ async function saveConfiguration() {
         config.modelFallbackMapping = {};
     }
     
-    config.CONSENSUS_MCPORTER_PATH = document.getElementById('consensusMcporterPath')?.value?.trim() || null;
 
     // 保存代理配置
     config.PROXY_URL = document.getElementById('proxyUrl')?.value?.trim() || null;

@@ -214,7 +214,6 @@
     {
       "customName": "Consensus MCP 节点",
       "CONSENSUS_MCPORTER_CONFIG_PATH": "./configs/consensus/mcporter.json",
-      "CONSENSUS_MCPORTER_PATH": "",
       "CONSENSUS_MCP_URL": "https://mcp.consensus.app/mcp",
       "CONSENSUS_MCP_SERVER_NAME": "consensus",
       "uuid": "a0000000-0000-4000-8000-000000000001",

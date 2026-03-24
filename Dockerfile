@@ -33,6 +33,11 @@ RUN apk add --no-cache --virtual .build-deps python3 make g++ sqlite-dev \
     && npm install \
     && apk del .build-deps
 
+# Consensus 提供商依赖 mcporter CLI：全局安装并固定到 /usr/bin/mcporter（应用内不再配置可执行路径）
+RUN npm install -g mcporter \
+    && ln -sf /usr/local/bin/mcporter /usr/bin/mcporter \
+    && /usr/bin/mcporter --version
+
 # 复制源代码
 COPY . .
 

@@ -87,7 +87,7 @@ export const PROVIDER_MAPPINGS = [
         defaultCheckModel: 'consensus-paper-search',
         displayName: 'Consensus MCP (mcporter)',
         needsProjectId: false,
-        urlKeys: ['CONSENSUS_MCPORTER_PATH', 'CONSENSUS_MCP_URL', 'CONSENSUS_MCP_SERVER_NAME']
+        urlKeys: ['CONSENSUS_MCP_URL', 'CONSENSUS_MCP_SERVER_NAME']
     },
     {
         // Grok Reverse 配置

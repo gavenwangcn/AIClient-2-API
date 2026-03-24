@@ -110,7 +110,6 @@ export async function handleUpdateConfig(req, res, currentConfig) {
         if (newConfig.GEMINI_OAUTH_CLIENT_SECRET !== undefined) currentConfig.GEMINI_OAUTH_CLIENT_SECRET = newConfig.GEMINI_OAUTH_CLIENT_SECRET;
         if (newConfig.ANTIGRAVITY_OAUTH_CLIENT_ID !== undefined) currentConfig.ANTIGRAVITY_OAUTH_CLIENT_ID = newConfig.ANTIGRAVITY_OAUTH_CLIENT_ID;
         if (newConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET !== undefined) currentConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET = newConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET;
-        if (newConfig.CONSENSUS_MCPORTER_PATH !== undefined) currentConfig.CONSENSUS_MCPORTER_PATH = newConfig.CONSENSUS_MCPORTER_PATH;
 
         // Log settings
         if (newConfig.LOG_ENABLED !== undefined) currentConfig.LOG_ENABLED = newConfig.LOG_ENABLED;
@@ -187,7 +186,6 @@ export async function handleUpdateConfig(req, res, currentConfig) {
                 GEMINI_OAUTH_CLIENT_SECRET: currentConfig.GEMINI_OAUTH_CLIENT_SECRET,
                 ANTIGRAVITY_OAUTH_CLIENT_ID: currentConfig.ANTIGRAVITY_OAUTH_CLIENT_ID,
                 ANTIGRAVITY_OAUTH_CLIENT_SECRET: currentConfig.ANTIGRAVITY_OAUTH_CLIENT_SECRET,
-                CONSENSUS_MCPORTER_PATH: currentConfig.CONSENSUS_MCPORTER_PATH
             };
 
             writeFileSync(configPath, JSON.stringify(configToSave, null, 2), 'utf-8');

@@ -4,7 +4,7 @@ import { getRequestBody } from '../../utils/common.js';
 import { MODEL_PROVIDER } from '../../utils/common.js';
 import logger from '../../utils/logger.js';
 import { getApiService } from '../../services/service-manager.js';
-import { resolveMcporterExecutable } from './consensus-mcp-utils.js';
+import { getMcporterExecutable } from './consensus-mcp-utils.js';
 import { createApiTraceLogger } from '../../utils/api-trace-logger.js';
 
 function createConsensusMcpTrace(method, pathName) {
@@ -112,7 +112,7 @@ async function handleConsensusMcpJsonRpc(body, currentConfig) {
     }
 
     if (body.method === 'tools/list') {
-        const bin = resolveMcporterExecutable(cfg);
+        const bin = getMcporterExecutable();
         const configPath = cfg.CONSENSUS_MCPORTER_CONFIG_PATH;
         if (!configPath) {
             return { jsonrpc: '2.0', id, error: { code: -32603, message: 'CONSENSUS_MCPORTER_CONFIG_PATH missing' } };
@@ -231,7 +231,7 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
             trace.startPhase('upstream', 'mcporter list --schema');
             const service = await getApiService(currentConfig, null, { skipUsageCount: true });
             const cfg = service.consensusApiService?.config || service.config;
-            const bin = resolveMcporterExecutable(cfg);
+            const bin = getMcporterExecutable();
             const configPath = cfg.CONSENSUS_MCPORTER_CONFIG_PATH;
             const serverName = cfg.CONSENSUS_MCP_SERVER_NAME || 'consensus';
             if (!configPath) {

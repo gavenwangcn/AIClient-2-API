@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promises as fsp } from 'fs';
 import logger from '../../utils/logger.js';
-import { resolveMcporterExecutable } from './consensus-mcp-utils.js';
+import { getMcporterExecutable } from './consensus-mcp-utils.js';
 
 const DEFAULT_MCP_URL = 'https://mcp.consensus.app/mcp';
 const DEFAULT_SERVER_NAME = 'consensus';
@@ -32,7 +32,7 @@ function toMcporterArgTokens(args) {
  * 运行 mcporter call，返回解析后的 JSON（若输出非 JSON 则返回原始字符串包装）
  */
 export async function runMcporterCall(config) {
-    const bin = resolveMcporterExecutable(config);
+    const bin = getMcporterExecutable();
     const configPath = config.CONSENSUS_MCPORTER_CONFIG_PATH;
     if (!configPath) {
         throw new Error('CONSENSUS_MCPORTER_CONFIG_PATH is required');
@@ -93,9 +93,6 @@ export class ConsensusApiService {
         this.isInitialized = true;
         if (!config.CONSENSUS_MCPORTER_CONFIG_PATH) {
             throw new Error('CONSENSUS_MCPORTER_CONFIG_PATH is required for Consensus (mcporter) provider.');
-        }
-        if (resolveMcporterExecutable(config) === 'mcporter') {
-            logger.warn('[Consensus] CONSENSUS_MCPORTER_PATH not set (node or global), using mcporter from PATH');
         }
         this.mcpUrl = config.CONSENSUS_MCP_URL || DEFAULT_MCP_URL;
         this.serverName = config.CONSENSUS_MCP_SERVER_NAME || DEFAULT_SERVER_NAME;
