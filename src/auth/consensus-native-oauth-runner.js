@@ -76,6 +76,8 @@ export async function cancelConsensusNativeOAuthSession(log) {
  * @param {string|null} [opts.tokenCacheDirAbs]
  * @param {number} [opts.oauthTimeoutMs]
  * @param {number} [opts.urlCaptureTimeoutMs]
+ * @param {(ctx: { definition: object }) => Promise<void>} [opts.onOAuthComplete]
+ *        在 `connectWithAuth` 成功且 `readCachedAccessToken` 确认已落盘 access_token 后调用（回调换 token 完成并写入 vault/tokenCache 之后）。
  */
 export async function startConsensusNativeOAuth(opts) {
     const {
@@ -86,6 +88,7 @@ export async function startConsensusNativeOAuth(opts) {
         tokenCacheDirAbs,
         oauthTimeoutMs = DEFAULT_OAUTH_CODE_TIMEOUT_MS,
         urlCaptureTimeoutMs = 45_000,
+        onOAuthComplete,
     } = opts;
 
     const hadExistingListener = activeNativeHandle !== null;
@@ -164,6 +167,10 @@ export async function startConsensusNativeOAuth(opts) {
             appLogger.info(
                 `[Consensus Native OAuth] 授权判定成功：vault/缓存中已存在 access_token（与 mcporter 落盘一致） tokenLen=${access.length}`
             );
+            if (typeof onOAuthComplete === 'function') {
+                appLogger.info('[Consensus Native OAuth] 调用 onOAuthComplete（换取 token 并已落盘后的确认）');
+                await onOAuthComplete({ definition });
+            }
             return { ok: true };
         } finally {
             await transport.close().catch(() => {});

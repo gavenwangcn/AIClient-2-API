@@ -1,5 +1,4 @@
 import * as path from 'path';
-import * as fs from 'fs';
 import { promises as fsp } from 'fs';
 import os from 'os';
 import logger from '../utils/logger.js';
@@ -12,8 +11,6 @@ import { startConsensusNativeOAuth, cancelConsensusNativeOAuthSession } from './
 
 const DEFAULT_MCP_URL = 'https://mcp.consensus.app/mcp';
 const DEFAULT_SERVER_NAME = 'consensus';
-const POLL_MS = 2000;
-const POLL_MAX_MS = 5 * 60 * 1000;
 /** 等待 SDK 打印授权链接的最长时间（毫秒） */
 const URL_CAPTURE_TIMEOUT_MS = 45000;
 
@@ -89,7 +86,7 @@ export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcp
     data.mcpServers[serverName] = entry;
     await fsp.writeFile(absConfigPath, JSON.stringify(data, null, 2), 'utf8');
     const hadPrev = !!(prev && typeof prev === 'object');
-    const hadTokens = hadPrev && looksLikeMcporterAuthed(JSON.stringify(prev));
+    const hadTokens = hadPrev && mcpServerEntryHasOAuthTokens(prev);
     logger.info(
         `[Consensus OAuth] ensureConsensusMcporterFile wrote mcpServers.${serverName}.url=${mcpUrl} -> ${absConfigPath}` +
             ` hadPreviousEntry=${hadPrev} preservedOAuthLikeFields=${hadTokens}` +
@@ -103,20 +100,83 @@ export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcp
 }
 
 /**
- * 启发式判断 mcporter 配置是否已包含 OAuth / 会话信息（不同版本字段可能不同）
+ * 单个 mcpServers 条目是否已落盘可用的 OAuth token（非仅有 auth:'oauth' 配置占位）。
+ */
+function mcpServerEntryHasOAuthTokens(entry) {
+    if (!entry || typeof entry !== 'object') return false;
+    const directAt = entry.access_token ?? entry.accessToken;
+    const directRt = entry.refresh_token ?? entry.refreshToken;
+    if (typeof directAt === 'string' && directAt.trim().length > 0) return true;
+    if (typeof directRt === 'string' && directRt.trim().length > 0) return true;
+    const nested = entry.tokens;
+    if (nested && typeof nested === 'object') {
+        const a = nested.access_token ?? nested.accessToken;
+        const r = nested.refresh_token ?? nested.refreshToken;
+        if (typeof a === 'string' && a.trim().length > 0) return true;
+        if (typeof r === 'string' && r.trim().length > 0) return true;
+    }
+    return false;
+}
+
+/**
+ * 从已解析的 mcpServers 中选取 Consensus 相关条目（优先 serverName，其次 mcp.consensus.app URL，再选首个含 token 的条目）。
+ * @param {Record<string, unknown>} servers
+ * @param {string} [serverName]
+ * @returns {{ entry: object|null, entrySource: string }}
+ */
+function pickConsensusServerEntry(servers, serverName) {
+    const obj = servers && typeof servers === 'object' ? servers : {};
+    if (serverName && obj[serverName] && typeof obj[serverName] === 'object') {
+        return { entry: /** @type {object} */ (obj[serverName]), entrySource: `mcpServers.${serverName}` };
+    }
+    for (const v of Object.values(obj)) {
+        if (v && typeof v === 'object' && typeof v.url === 'string' && v.url.includes('mcp.consensus.app')) {
+            return { entry: /** @type {object} */ (v), entrySource: 'url contains mcp.consensus.app' };
+        }
+    }
+    for (const v of Object.values(obj)) {
+        if (v && typeof v === 'object' && mcpServerEntryHasOAuthTokens(/** @type {object} */ (v))) {
+            return { entry: /** @type {object} */ (v), entrySource: 'first server entry with oauth tokens' };
+        }
+    }
+    return { entry: null, entrySource: '' };
+}
+
+/**
+ * 项目 mcporter.json 全文是否已对 Consensus 完成 OAuth（已写入 access/refresh token）。
+ * 用于轮询与 oauth_success，避免仅有 auth:'oauth' 时误创建供应商账号。
+ */
+export function consensusMcporterJsonHasCompletedOAuth(content, serverName) {
+    if (!content || typeof content !== 'string') return false;
+    let data;
+    try {
+        data = JSON.parse(content);
+    } catch {
+        return false;
+    }
+    const { entry } = pickConsensusServerEntry(data.mcpServers || {}, serverName);
+    return mcpServerEntryHasOAuthTokens(entry);
+}
+
+/**
+ * 判断 JSON 文本是否表示「至少一个 mcp 服务器条目含 OAuth token」。
+ * 兼容整份 mcporter.json 或单个服务器条目对象序列化。
  */
 export function looksLikeMcporterAuthed(content) {
     if (!content || typeof content !== 'string') return false;
-    const lower = content.toLowerCase();
-    return (
-        lower.includes('access_token') ||
-        lower.includes('accesstoken') ||
-        lower.includes('refreshtoken') ||
-        lower.includes('refresh_token') ||
-        lower.includes('"oauth"') ||
-        lower.includes('authorization') ||
-        lower.includes('session')
-    );
+    let data;
+    try {
+        data = JSON.parse(content);
+    } catch {
+        return false;
+    }
+    if (data.mcpServers && typeof data.mcpServers === 'object') {
+        for (const v of Object.values(data.mcpServers)) {
+            if (v && typeof v === 'object' && mcpServerEntryHasOAuthTokens(v)) return true;
+        }
+        return false;
+    }
+    return mcpServerEntryHasOAuthTokens(data);
 }
 
 /**
@@ -243,13 +303,6 @@ async function mergeConsensusMcpFromSourceToProject(absConfigPath, serverName, m
         logger.info(`[Consensus OAuth] merge skip: cannot read ${sourcePath} (${e.code || e.message || 'unknown'})`);
         return false;
     }
-    if (!looksLikeMcporterAuthed(raw)) {
-        logger.info(
-            `[Consensus OAuth] merge skip: ${sourcePath} has no OAuth-like fields (len=${raw.length})`
-        );
-        return false;
-    }
-
     let data;
     try {
         data = JSON.parse(raw);
@@ -259,30 +312,15 @@ async function mergeConsensusMcpFromSourceToProject(absConfigPath, serverName, m
     }
     const servers = data.mcpServers || {};
     const serverNames = Object.keys(servers);
-    let entry = null;
-    let entrySource = '';
-    for (const v of Object.values(servers)) {
-        if (v && typeof v === 'object' && typeof v.url === 'string' && v.url.includes('mcp.consensus.app')) {
-            entry = { ...v };
-            entrySource = 'url contains mcp.consensus.app';
-            break;
-        }
-    }
-    if (!entry) {
-        for (const v of Object.values(servers)) {
-            if (v && typeof v === 'object' && looksLikeMcporterAuthed(JSON.stringify(v))) {
-                entry = { ...v };
-                entrySource = 'first server with oauth-like fields';
-                break;
-            }
-        }
-    }
-    if (!entry) {
+    const picked = pickConsensusServerEntry(servers, serverName);
+    if (!picked.entry || !mcpServerEntryHasOAuthTokens(picked.entry)) {
         logger.info(
-            `[Consensus OAuth] merge skip: ${sourcePath} mcpServers has no usable entry (keys=${serverNames.join(',') || 'none'})`
+            `[Consensus OAuth] merge skip: ${sourcePath} has no Consensus mcp entry with stored access/refresh token (keys=${serverNames.join(',') || 'none'})`
         );
         return false;
     }
+    const entrySource = picked.entrySource;
+    const entry = { ...picked.entry };
 
     const mergedKeys = Object.keys(entry).filter((k) => k !== 'url');
     let target = {};
@@ -422,17 +460,10 @@ async function tryMergeMcporterOAuthIntoProject(absConfigPath, serverName, mcpUr
     return false;
 }
 
-let activePollTimer = null;
-
 /**
- * 用户取消授权 UI 或关闭弹框时调用：结束轮询并关闭原生 OAuth 回调 HTTP（释放 TCP 端口）与 MCP 传输。
+ * 用户取消授权 UI 或关闭弹框时调用：关闭原生 OAuth 回调 HTTP（释放 TCP 端口）与 MCP 传输。
  */
 export async function cancelConsensusMcporterAuth() {
-    if (activePollTimer) {
-        clearInterval(activePollTimer);
-        activePollTimer = null;
-        logger.info('[Consensus OAuth] cancel: cleared credential poll timer');
-    }
     await cancelConsensusNativeOAuthSession(logger);
     logger.info('[Consensus OAuth] cancel: native OAuth session stopped');
 }
@@ -500,11 +531,42 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         logger.info(`[Consensus OAuth] mirrored server entry to mcporter home config: ${homeMcporterJson}`);
     }
 
-    /** 回调 HTTP 的启停由 startConsensusNativeOAuth 内统一处理：先 cancel 再 listen，避免重复监听 */
-    if (activePollTimer) {
-        clearInterval(activePollTimer);
-        activePollTimer = null;
-    }
+    const relNorm = normalizePath(relConfig.replace(/\\/g, '/'));
+    let consensusOAuthSuccessEmitted = false;
+    /** 仅在原生 OAuth 流程内、确认 access_token 已写入 vault/tokenCache 后调用一次（见 consensus-native-oauth-runner onOAuthComplete） */
+    const emitConsensusOAuthSuccessAfterPersist = async () => {
+        if (consensusOAuthSuccessEmitted) return;
+        consensusOAuthSuccessEmitted = true;
+        try {
+            logger.info(
+                '[Consensus OAuth] OAuth 流程内确认：access_token 已落盘，合并项目配置并广播 oauth_success'
+            );
+            await tryMergeMcporterOAuthIntoProject(absConfig, serverName, mcpUrl);
+            let text = '';
+            try {
+                text = await fsp.readFile(absConfig, 'utf8');
+            } catch {
+                /* ignore */
+            }
+            logConsensusMcporterJsonSecrets(`oauth-complete ${absConfig}`, text, serverName);
+            broadcastEvent('oauth_success', {
+                provider: 'consensus-mcp-oauth',
+                credPath: absConfig,
+                relativePath: relNorm.startsWith('./') ? relNorm : `./${relNorm}`.replace('././', './'),
+                timestamp: new Date().toISOString(),
+            });
+            try {
+                await autoLinkProviderConfigs(CONFIG, {
+                    onlyCurrentCred: true,
+                    credPath: relNorm.startsWith('./') ? relNorm : `./${relNorm}`,
+                });
+            } catch (e) {
+                logger.warn(`[Consensus OAuth] autoLinkProviderConfigs: ${e.message}`);
+            }
+        } catch (e) {
+            logger.warn(`[Consensus OAuth] emitConsensusOAuthSuccessAfterPersist: ${e.message}`);
+        }
+    };
 
     let nativeResult;
     try {
@@ -516,6 +578,7 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
             tokenCacheDirAbs,
             oauthTimeoutMs,
             urlCaptureTimeoutMs,
+            onOAuthComplete: emitConsensusOAuthSuccessAfterPersist,
         });
     } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
@@ -527,126 +590,20 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
 
     const { authUrl: authUrlCaptured, alreadyAuthed, flowPromise } = nativeResult;
 
+    if (!authUrlCaptured && !alreadyAuthed) {
+        throw new Error('Consensus OAuth：未获得授权链接且未处于已登录状态');
+    }
+
     flowPromise.catch((e) => {
         const msg = e instanceof Error ? e.message : String(e);
         logger.error(`[Consensus OAuth] background OAuth flow rejected: ${msg}`);
     });
 
-    if (!authUrlCaptured && !alreadyAuthed) {
-        throw new Error('Consensus OAuth：未获得授权链接且未处于已登录状态');
-    }
-
-    const relNorm = normalizePath(relConfig.replace(/\\/g, '/'));
-
     if (alreadyAuthed) {
-        logger.info('[Consensus OAuth] 已有有效 token，连接未触发浏览器授权；合并 vault 到项目并尝试广播 oauth_success');
-        try {
-            await tryMergeMcporterOAuthIntoProject(absConfig, serverName, mcpUrl);
-            const text = await fsp.readFile(absConfig, 'utf8');
-            if (looksLikeMcporterAuthed(text)) {
-                logConsensusMcporterJsonSecrets(`alreadyAuthed ${absConfig}`, text, serverName);
-                broadcastEvent('oauth_success', {
-                    provider: 'consensus-mcp-oauth',
-                    credPath: absConfig,
-                    relativePath: relNorm.startsWith('./') ? relNorm : `./${relNorm}`.replace('././', './'),
-                    timestamp: new Date().toISOString(),
-                });
-                await autoLinkProviderConfigs(CONFIG, {
-                    onlyCurrentCred: true,
-                    credPath: relNorm.startsWith('./') ? relNorm : `./${relNorm}`,
-                });
-            }
-        } catch (e) {
-            logger.warn(`[Consensus OAuth] alreadyAuthed merge/broadcast: ${e.message}`);
-        }
+        logger.info(
+            '[Consensus OAuth] 已有有效 token，连接未触发浏览器授权；oauth_success 已在流程内（access_token 落盘后）发出'
+        );
     }
-    let baseline = null;
-    try {
-        baseline = fs.statSync(absConfig).mtimeMs;
-    } catch {
-        baseline = 0;
-    }
-
-    if (activePollTimer) {
-        clearInterval(activePollTimer);
-        activePollTimer = null;
-    }
-
-    const started = Date.now();
-    let pollTick = 0;
-    let mergeProbeLogged = false;
-    activePollTimer = setInterval(async () => {
-        pollTick++;
-        try {
-            let text = '';
-            try {
-                text = await fsp.readFile(absConfig, 'utf8');
-            } catch {
-                return;
-            }
-            const projectAuthed = looksLikeMcporterAuthed(text);
-            if (pollTick === 1) {
-                logger.info(
-                    `[Consensus OAuth] poll start: intervalMs=${POLL_MS} maxMs=${POLL_MAX_MS} baselineMtimeMs=${baseline} projectFileLen=${text.length} projectLooksAuthed=${projectAuthed} authUseConfig=${authUseConfig}`
-                );
-            }
-            if (!authUseConfig && !projectAuthed) {
-                const merged = await tryMergeMcporterOAuthIntoProject(absConfig, serverName, mcpUrl);
-                if (!merged && !mergeProbeLogged) {
-                    mergeProbeLogged = true;
-                    logger.info(
-                        `[Consensus OAuth] merge: no Consensus OAuth block merged yet; will retry every ${POLL_MS}ms (checked ${JSON.stringify(getMergeCandidatePathsForLog(absConfig))})`
-                    );
-                }
-                try {
-                    text = await fsp.readFile(absConfig, 'utf8');
-                } catch {
-                    return;
-                }
-            }
-            if (looksLikeMcporterAuthed(text)) {
-                clearInterval(activePollTimer);
-                activePollTimer = null;
-                logger.info(
-                    `[Consensus OAuth] Detected credentials in mcporter config after ${Date.now() - started}ms pollTicks=${pollTick} file=${absConfig}`
-                );
-                logConsensusMcporterJsonSecrets(`poll success ${absConfig}`, text, serverName);
-
-                broadcastEvent('oauth_success', {
-                    provider: 'consensus-mcp-oauth',
-                    credPath: absConfig,
-                    relativePath: relNorm.startsWith('./') ? relNorm : `./${relNorm}`.replace('././', './'),
-                    timestamp: new Date().toISOString(),
-                });
-
-                try {
-                    await autoLinkProviderConfigs(CONFIG, {
-                        onlyCurrentCred: true,
-                        credPath: relNorm.startsWith('./') ? relNorm : `./${relNorm}`,
-                    });
-                } catch (e) {
-                    logger.warn(`[Consensus OAuth] autoLinkProviderConfigs: ${e.message}`);
-                }
-            } else {
-                const st = fs.statSync(absConfig);
-                if (st.mtimeMs <= baseline && Date.now() - started < 3000) {
-                    logger.info(
-                        `[Consensus OAuth] poll tick=${pollTick} skip early: mtime not past baseline yet (mtimeMs=${st.mtimeMs} baseline=${baseline})`
-                    );
-                }
-            }
-        } catch (e) {
-            logger.warn(`[Consensus OAuth] poll: ${e.message}`);
-        }
-
-        if (Date.now() - started > POLL_MAX_MS) {
-            clearInterval(activePollTimer);
-            activePollTimer = null;
-            logger.info(
-                `[Consensus OAuth] poll stopped after timeout ${POLL_MAX_MS}ms (pollTicks=${pollTick}) — no oauth_success broadcast`
-            );
-        }
-    }, POLL_MS);
 
     if (authUrlCaptured) {
         logger.info(
@@ -673,7 +630,7 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
                 ? '当前 MCP 连接已具备有效 OAuth token（与 mcporter 共用 ~/.mcporter/credentials.json vault）。无需在浏览器中再次授权。'
                 : authUseConfig
                   ? '请点击页面上的授权链接在新窗口完成 Consensus 登录。回调由本服务进程监听 oauthRedirectUrl（默认 localhost）。Docker 须映射回调端口到容器。'
-                  : '第一步：在浏览器打开授权链接完成登录（本服务不自动打开系统浏览器）。第二步：授权成功后 token 写入 ~/.mcporter/credentials.json（及可选 tokenCacheDir），本服务会轮询并合并到项目 mcporter.json。',
+                  : '第一步：在浏览器打开授权链接完成登录（本服务不自动打开系统浏览器）。第二步：授权成功后 token 写入 ~/.mcporter/credentials.json（及可选 tokenCacheDir），本服务在换取 access_token 并落盘后会合并到项目 mcporter.json 并更新提供商信息。',
         },
     };
 }
