@@ -223,6 +223,7 @@ function getAvailableRoutes() {
             paths: {
                 openai: '/consensus-mcp-oauth/v1/chat/completions',
                 claude: '/consensus-mcp-oauth/v1/messages',
+                mcpTools: '/consensus-mcp-oauth/v1/mcp/tools',
                 mcp: '/consensus-mcp-oauth/v1/mcp/call',
                 mcpJsonRpc: '/consensus-mcp-oauth/v1/mcp'
             },
@@ -492,20 +493,20 @@ function renderRoutingExamples(providerConfigs) {
         const card = document.createElement('div');
         card.className = 'routing-example-card';
         card.dataset.provider = `${config.id}-card`;
-        
-        card.innerHTML = `
-            <div class="routing-card-header">
-                <i class="fas ${icon}"></i>
-                <h4>${routeInfo.name}</h4>
-                <span class="provider-badge ${routeInfo.badgeClass}">${routeInfo.badge}</span>
-            </div>
-            <div class="routing-card-content">
+
+        const openaiTabActive = config.id === 'openai-codex-oauth' ? '' : 'active';
+        const claudeTabActive = config.id === 'openai-codex-oauth' ? 'active' : '';
+        const openaiContentActive = config.id === 'openai-codex-oauth' ? '' : 'active';
+        const claudeContentActive = config.id === 'openai-codex-oauth' ? 'active' : '';
+
+        const standardTabs = `
                 <div class="protocol-tabs">
-                    <button class="protocol-tab ${config.id === 'openai-codex-oauth' ? '' : 'active'}" data-protocol="openai" data-i18n="dashboard.routing.openai">${t('dashboard.routing.openai')}</button>
-                    <button class="protocol-tab ${config.id === 'openai-codex-oauth' ? 'active' : ''}" data-protocol="claude" data-i18n="dashboard.routing.claude">${t('dashboard.routing.claude')}</button>
-                </div>
-                
-                <div class="protocol-content ${config.id === 'openai-codex-oauth' ? '' : 'active'}" data-protocol="openai">
+                    <button class="protocol-tab ${openaiTabActive}" data-protocol="openai" data-i18n="dashboard.routing.openai">${t('dashboard.routing.openai')}</button>
+                    <button class="protocol-tab ${claudeTabActive}" data-protocol="claude" data-i18n="dashboard.routing.claude">${t('dashboard.routing.claude')}</button>
+                </div>`;
+
+        const standardOpenaiBlock = `
+                <div class="protocol-content ${openaiContentActive}" data-protocol="openai">
                     <div class="endpoint-info">
                         <label data-i18n="dashboard.routing.endpoint">${t('dashboard.routing.endpoint')}</label>
                         <code class="endpoint-path">${routeInfo.paths.openai}</code>
@@ -521,9 +522,10 @@ function renderRoutingExamples(providerConfigs) {
     "max_tokens": 1000
   }'</code></pre>
                     </div>
-                </div>
-                
-                <div class="protocol-content ${config.id === 'openai-codex-oauth' ? 'active' : ''}" data-protocol="claude">
+                </div>`;
+
+        const standardClaudeBlock = `
+                <div class="protocol-content ${claudeContentActive}" data-protocol="claude">
                     <div class="endpoint-info">
                         <label data-i18n="dashboard.routing.endpoint">${t('dashboard.routing.endpoint')}</label>
                         <code class="endpoint-path">${routeInfo.paths.claude}</code>
@@ -539,7 +541,79 @@ function renderRoutingExamples(providerConfigs) {
     "messages": [{"role": "user", "content": "Hello!"}]
   }'</code></pre>
                     </div>
+                </div>`;
+
+        let cardInnerContent;
+        if (config.id === 'consensus-mcp-oauth' && routeInfo.paths.mcpTools && routeInfo.paths.mcp && routeInfo.paths.mcpJsonRpc) {
+            cardInnerContent = `
+                <div class="protocol-tabs">
+                    <button class="protocol-tab ${openaiTabActive}" data-protocol="openai" data-i18n="dashboard.routing.openai">${t('dashboard.routing.openai')}</button>
+                    <button class="protocol-tab ${claudeTabActive}" data-protocol="claude" data-i18n="dashboard.routing.claude">${t('dashboard.routing.claude')}</button>
+                    <button class="protocol-tab" data-protocol="mcp">${t('dashboard.routing.mcp')}</button>
                 </div>
+                ${standardOpenaiBlock}
+                ${standardClaudeBlock}
+                <div class="protocol-content" data-protocol="mcp">
+                    <p class="routing-mcp-proxy-note" style="font-size:0.875rem;color:var(--text-secondary, #6b7280);margin:0 0 14px;line-height:1.5;">${t('dashboard.routing.mcpProxyNote')}</p>
+                    <h5 style="margin:12px 0 8px;font-size:0.95rem;font-weight:600;">${t('dashboard.routing.mcpSectionCurl')}</h5>
+                    <div class="endpoint-info">
+                        <label data-i18n="dashboard.routing.endpoint">${t('dashboard.routing.endpoint')}</label>
+                        <code class="endpoint-path">${routeInfo.paths.mcpTools}</code>
+                    </div>
+                    <div class="usage-example">
+                        <label>GET — 列出工具（底层 mcporter list consensus --schema）</label>
+                        <pre><code>curl ${hostname}${routeInfo.paths.mcpTools} \\
+  -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
+                    </div>
+                    <div class="endpoint-info" style="margin-top:12px;">
+                        <label data-i18n="dashboard.routing.endpoint">${t('dashboard.routing.endpoint')}</label>
+                        <code class="endpoint-path">${routeInfo.paths.mcp}</code>
+                    </div>
+                    <div class="usage-example">
+                        <label>POST — 调用工具（底层 mcporter call）</label>
+                        <pre><code>curl ${hostname}${routeInfo.paths.mcp} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -d '{"selector":"consensus.search","args":{"query":"machine learning meta-analysis"}}'</code></pre>
+                    </div>
+                    <div class="endpoint-info" style="margin-top:12px;">
+                        <label data-i18n="dashboard.routing.endpoint">${t('dashboard.routing.endpoint')}</label>
+                        <code class="endpoint-path">${routeInfo.paths.mcpJsonRpc}</code>
+                    </div>
+                    <div class="usage-example">
+                        <label>POST — JSON-RPC tools/list（节选）</label>
+                        <pre><code>curl ${hostname}${routeInfo.paths.mcpJsonRpc} \\
+  -H "Content-Type: application/json" \\
+  -H "Authorization: Bearer YOUR_API_KEY" \\
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'</code></pre>
+                    </div>
+                    <h5 style="margin:18px 0 8px;font-size:0.95rem;font-weight:600;">${t('dashboard.routing.mcpSectionDocker')}</h5>
+                    <p style="font-size:0.8rem;color:var(--text-secondary, #6b7280);margin:0 0 10px;">${t('dashboard.routing.mcpDockerHint')}</p>
+                    <div class="usage-example">
+                        <label>list — 与 OAuth 成功后自检一致</label>
+                        <pre><code>docker exec -e HOME=/app aiclient2api /usr/bin/mcporter \\
+  --config /app/configs/consensus/mcporter.json --log-level error \\
+  list consensus --schema --json</code></pre>
+                    </div>
+                    <div class="usage-example">
+                        <label>call — 检索示例</label>
+                        <pre><code>docker exec -e HOME=/app aiclient2api /usr/bin/mcporter \\
+  --config /app/configs/consensus/mcporter.json --log-level error \\
+  call consensus.search query="diabetes treatment review" --output json</code></pre>
+                    </div>
+                </div>`;
+        } else {
+            cardInnerContent = `${standardTabs}${standardOpenaiBlock}${standardClaudeBlock}`;
+        }
+
+        card.innerHTML = `
+            <div class="routing-card-header">
+                <i class="fas ${icon}"></i>
+                <h4>${routeInfo.name}</h4>
+                <span class="provider-badge ${routeInfo.badgeClass}">${routeInfo.badge}</span>
+            </div>
+            <div class="routing-card-content">
+                ${cardInnerContent}
             </div>
         `;
         

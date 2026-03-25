@@ -666,15 +666,31 @@ export class ConsensusApiServiceAdapter extends ApiServiceAdapter {
     }
 
     async refreshToken() {
-        return Promise.resolve();
+        if (!this.consensusApiService.isInitialized) {
+            await this.consensusApiService.initialize();
+        }
+        await this.consensusApiService.reloadOAuthSnapshot().catch(() => {});
+        const uuid = this.consensusApiService.config?.uuid ?? 'n/a';
+        if (this.isExpiryDateNear() !== true) {
+            return Promise.resolve();
+        }
+        logger.info(
+            `[Consensus MCP OAuth] 适配器 refreshToken | uuid=${uuid} isExpiryDateNear=true，进入 runMcpOAuthRefresh(force=false)`
+        );
+        return this.consensusApiService.runMcpOAuthRefresh(false);
     }
 
     async forceRefreshToken() {
-        return Promise.resolve();
+        if (!this.consensusApiService.isInitialized) {
+            await this.consensusApiService.initialize();
+        }
+        const uuid = this.consensusApiService.config?.uuid ?? 'n/a';
+        logger.info(`[Consensus MCP OAuth] 适配器 forceRefreshToken | uuid=${uuid} 将跳过临近判定并刷新`);
+        return this.consensusApiService.runMcpOAuthRefresh(true);
     }
 
     isExpiryDateNear() {
-        return false;
+        return this.consensusApiService.isExpiryDateNear();
     }
 
     /**

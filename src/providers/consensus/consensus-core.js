@@ -3,7 +3,13 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promises as fsp } from 'fs';
 import logger from '../../utils/logger.js';
+import { MODEL_PROVIDER, formatExpiryLog } from '../../utils/common.js';
 import { getMcporterExecutable, resolveConsensusTokenCacheDir } from './consensus-mcp-utils.js';
+import { buildOAuthPersistence } from '../../auth/mcporter-oauth/oauth-persistence.js';
+import {
+    computeMcpAccessTokenExpiryMs,
+    refreshMcpOAuthAccessToken,
+} from '../../auth/mcporter-oauth/mcporter-oauth-refresh.js';
 
 const DEFAULT_MCP_URL = 'https://mcp.consensus.app/mcp';
 const DEFAULT_SERVER_NAME = 'consensus';
@@ -104,16 +110,54 @@ export async function runMcporterCall(config) {
 export class ConsensusApiService {
     constructor(config) {
         this.config = config;
-        this.isInitialized = true;
+        this.isInitialized = false;
         if (!config.CONSENSUS_MCPORTER_CONFIG_PATH) {
             throw new Error('CONSENSUS_MCPORTER_CONFIG_PATH is required for Consensus (mcporter) provider.');
         }
         this.mcpUrl = config.CONSENSUS_MCP_URL || DEFAULT_MCP_URL;
         this.serverName = config.CONSENSUS_MCP_SERVER_NAME || DEFAULT_SERVER_NAME;
+        this.uuid = config.uuid;
+        /** @type {Record<string, unknown> | null} */
+        this._oauthTokens = null;
+        /** @type {string | null} */
+        this._oauthTokensJsonPath = null;
+    }
+
+    /**
+     * 与 mcporter / 原生 OAuth 相同的 ServerDefinition，供 persistence 与 refresh 使用。
+     */
+    getServerDefinition() {
+        const rel = this.config.CONSENSUS_MCPORTER_CONFIG_PATH;
+        const abs = path.isAbsolute(rel) ? rel : path.resolve(process.cwd(), rel);
+        const tokenCacheDirAbs = resolveConsensusTokenCacheDir(abs, this.config);
+        const redirect = String(
+            this.config.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || process.env.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || ''
+        ).trim();
+        return {
+            name: this.serverName,
+            command: { kind: 'http', url: new URL(this.mcpUrl), headers: {} },
+            auth: 'oauth',
+            ...(redirect ? { oauthRedirectUrl: redirect } : {}),
+            ...(tokenCacheDirAbs ? { tokenCacheDir: tokenCacheDirAbs } : {}),
+        };
+    }
+
+    /** 从 vault/tokenCache 重读 token 快照（同步 isExpiryDateNear 用的内存视图） */
+    async reloadOAuthSnapshot() {
+        const def = this.getServerDefinition();
+        const persistence = await buildOAuthPersistence(def, logger);
+        this._oauthTokens = (await persistence.readTokens()) ?? null;
+        this._oauthTokensJsonPath = def.tokenCacheDir ? path.join(def.tokenCacheDir, 'tokens.json') : null;
     }
 
     async initialize() {
+        if (this.isInitialized) {
+            return;
+        }
         await this.ensureMcporterJson();
+        await this.reloadOAuthSnapshot().catch((e) => {
+            logger.warn(`[Consensus] OAuth snapshot load skipped: ${e.message}`);
+        });
         this.isInitialized = true;
     }
 
@@ -244,11 +288,94 @@ export class ConsensusApiService {
         yield unary;
     }
 
+    /**
+     * 使用 refresh_token 刷新 access_token 并写回 ~/.mcporter/credentials.json 与 tokenCacheDir（与 mcporter 一致）。
+     * @param {boolean} [force] - true 时跳过临近过期判断
+     */
+    async runMcpOAuthRefresh(force = false) {
+        logger.info(
+            `[Consensus MCP OAuth] 刷新流程入口 | force=${force} uuid=${this.uuid ?? 'n/a'} server=${this.serverName} mcpUrl=${this.mcpUrl} config=${this.config.CONSENSUS_MCPORTER_CONFIG_PATH ?? 'n/a'}`
+        );
+        await this.ensureMcporterJson();
+        await this.reloadOAuthSnapshot();
+        const snapRt = !!this._oauthTokens?.refresh_token;
+        const snapAt = typeof this._oauthTokens?.access_token === 'string' ? this._oauthTokens.access_token.length : 0;
+        logger.info(
+            `[Consensus MCP OAuth] 快照已加载 | tokensJson=${this._oauthTokensJsonPath ?? '(none)'} has_refresh_token=${snapRt} access_token_len=${snapAt}`
+        );
+        if (!force && this.isExpiryDateNear() !== true) {
+            logger.info(
+                '[Consensus MCP OAuth] 本次不执行 HTTP 刷新：force=false 且 access 未临近过期（由 isExpiryDateNear 判定）'
+            );
+            return;
+        }
+        if (!this._oauthTokens?.refresh_token) {
+            logger.warn('[Consensus MCP OAuth] 无 refresh_token，跳过刷新（需重新 OAuth）');
+            return;
+        }
+        const def = this.getServerDefinition();
+        const t0 = Date.now();
+        logger.info(
+            `[Consensus MCP OAuth] 调用 SDK refreshAuthorization | persistence 目标与 [refresh 1/6] 起日志一致，总计时起点 t0=${t0}`
+        );
+        await refreshMcpOAuthAccessToken(def, logger);
+        await this.reloadOAuthSnapshot();
+        const ms = Date.now() - t0;
+        const afterRt = !!this._oauthTokens?.refresh_token;
+        const afterAt = typeof this._oauthTokens?.access_token === 'string' ? this._oauthTokens.access_token.length : 0;
+        logger.info(
+            `[Consensus MCP OAuth] 刷新流程结束 | totalDurationMs=${ms} uuid=${this.uuid ?? 'n/a'} 快照: has_refresh_token=${afterRt} access_token_len=${afterAt}`
+        );
+        try {
+            const { getProviderPoolManager } = await import('../../services/service-manager.js');
+            const pool = getProviderPoolManager();
+            if (pool && this.uuid) {
+                pool.resetProviderRefreshStatus(MODEL_PROVIDER.CONSENSUS_MCP, this.uuid);
+                logger.info(
+                    `[Consensus MCP OAuth] 号池已重置节点刷新状态 | providerType=${MODEL_PROVIDER.CONSENSUS_MCP} uuid=${this.uuid}`
+                );
+            } else {
+                logger.info(
+                    `[Consensus MCP OAuth] 跳过号池重置 | pool=${pool ? 'ok' : 'null'} uuid=${this.uuid ?? 'none'}`
+                );
+            }
+        } catch (e) {
+            logger.info(
+                `[Consensus MCP OAuth] 号池重置未执行 | reason=${e instanceof Error ? e.message : String(e)}`
+            );
+        }
+    }
+
     async refreshToken() {
-        return Promise.resolve();
+        return this.runMcpOAuthRefresh(false);
+    }
+
+    async forceRefreshToken() {
+        return this.runMcpOAuthRefresh(true);
     }
 
     isExpiryDateNear() {
-        return false;
+        try {
+            const nearMinutes = 20;
+            if (!this._oauthTokens?.refresh_token) {
+                return false;
+            }
+            const expMs = computeMcpAccessTokenExpiryMs(
+                this._oauthTokens,
+                this._oauthTokensJsonPath
+            );
+            if (expMs == null) {
+                logger.info(
+                    '[Consensus MCP OAuth] Checking expiry | 无法从 JWT / mtime 推断过期时间，不触发定时刷新（可 force 或重新授权）'
+                );
+                return false;
+            }
+            const { message, isNearExpiry } = formatExpiryLog('Consensus MCP OAuth', expMs, nearMinutes);
+            logger.info(message);
+            return isNearExpiry;
+        } catch (error) {
+            logger.error(`[Consensus MCP OAuth] Error checking expiry date: ${error.message}`);
+            return false;
+        }
     }
 }
