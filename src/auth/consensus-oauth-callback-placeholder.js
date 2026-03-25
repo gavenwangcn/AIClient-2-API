@@ -4,6 +4,7 @@
  */
 import http from 'node:http';
 import { URL } from 'node:url';
+import logger from '../utils/logger.js';
 import { bindHostForOAuthListen } from './mcporter-oauth/oauth-session.js';
 import { probeTcpPortAvailable } from './mcporter-oauth/oauth-callback-port.js';
 
@@ -54,6 +55,9 @@ async function dispatch(req, res) {
             res.end('Not found');
             return;
         }
+        logger.info(
+            `[Consensus OAuth Hub] ${req.method} ${url} (空闲态：尚未注册 OAuth 处理，返回就绪页；与 :3000/health 无关)`
+        );
         res.statusCode = 200;
         res.setHeader('Content-Type', 'text/html; charset=utf-8');
         res.end(
