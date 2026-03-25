@@ -283,8 +283,8 @@ export class ProviderPoolManager {
         const runTask = async () => {
             try {
                 await this._refreshNodeToken(providerType, providerStatus, force);
-            } catch (err) {
-                this._log('error', `Failed to process refresh for node ${uuid}: ${err.message}`);
+            } catch {
+                // 刷新失败已由 _refreshNodeToken 内 logger.error 记录并标不健康
             } finally {
                 this.refreshingUuids.delete(uuid);
                 
@@ -360,46 +360,33 @@ export class ProviderPoolManager {
      */
     async _refreshNodeToken(providerType, providerStatus, force = false) {
         const config = providerStatus.config;
-        
-        // 检查刷新次数是否已达上限（最大5次）
-        const currentRefreshCount = config.refreshCount || 0;
-        if (currentRefreshCount >= 5 && !force) {
-            this._log('warn', `Node ${providerStatus.uuid} has reached maximum refresh count (5), marking as unhealthy`);
-            // 标记为不健康
-            this.markProviderUnhealthyImmediately(providerType, config, 'Maximum refresh count (5) reached');
-            return;
-        }
-        
-        // 添加5秒内的随机等待时间，避免并发刷新时的冲突
-        // const randomDelay = Math.floor(Math.random() * 5000);
-        // this._log('info', `Starting token refresh for node ${providerStatus.uuid} (${providerType}) with ${randomDelay}ms delay`);
-        // await new Promise(resolve => setTimeout(resolve, randomDelay));
 
         try {
-            // 增加刷新计数
-            config.refreshCount = currentRefreshCount + 1;
-
-            // 使用适配器进行刷新
+            // 使用适配器进行刷新（所有提供商共用此路径；仅在实际刷新失败时标不可用，不按尝试次数封禁）
             const tempConfig = {
                 ...this.globalConfig,
                 ...config,
                 MODEL_PROVIDER: providerType
             };
             const serviceAdapter = getServiceAdapter(tempConfig);
-            
-            // 调用适配器的 refreshToken 方法（内部封装了具体的刷新逻辑）
+
             if (typeof serviceAdapter.refreshToken === 'function') {
                 const startTime = Date.now();
-                force ? await serviceAdapter.forceRefreshToken() : await serviceAdapter.refreshToken() 
+                force ? await serviceAdapter.forceRefreshToken() : await serviceAdapter.refreshToken();
                 const duration = Date.now() - startTime;
                 this._log('info', `Token refresh successful for node ${providerStatus.uuid} (Duration: ${duration}ms)`);
+                config.refreshCount = 0;
+                this._debouncedSave(providerType);
             } else {
                 throw new Error(`refreshToken method not implemented for ${providerType}`);
             }
-
         } catch (error) {
-            this._log('error', `Token refresh failed for node ${providerStatus.uuid}: ${error.message}`);
-            this.markProviderUnhealthyImmediately(providerType, config, `Refresh failed: ${error.message}`);
+            const errMsg = error instanceof Error ? error.message : String(error);
+            const stack = error instanceof Error && error.stack ? error.stack : '';
+            logger.error(
+                `[ProviderPoolManager] Token refresh failed for node ${providerStatus.uuid} (${providerType}): ${errMsg}${stack ? `\n${stack}` : ''}`
+            );
+            this.markProviderUnhealthyImmediately(providerType, config, `Refresh failed: ${errMsg}`);
             throw error;
         }
     }
@@ -1476,7 +1463,7 @@ export class ProviderPoolManager {
     }
 
     /**
-     * 重置提供商的刷新状态（needsRefresh 和 refreshCount）
+     * 重置提供商的刷新状态（needsRefresh 与 refreshCount，后者仅作兼容字段）
      * 并将其标记为健康，以便立即投入使用
      * @param {string} providerType - 提供商类型
      * @param {string} uuid - 提供商 UUID
