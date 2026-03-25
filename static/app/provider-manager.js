@@ -2593,7 +2593,7 @@ function showAuthModal(authUrl, authInfo) {
         const fixedRedirect = authInfo.consensusOAuthRedirectUrl;
         const step2 = fixedRedirect
             ? `登录并同意授权；OAuth 回调已固定为 <code>${fixedRedirect}</code>（请确保宿主机端口已映射到容器内 mcporter，并在可访问该地址的环境完成授权）。`
-            : '登录并同意授权；回调由本机 mcporter 监听 <code>127.0.0.1:端口/callback</code>，请在与运行 mcporter <strong>同一台机器</strong>的浏览器中完成（或通过远程桌面在服务器上打开链接）。';
+            : '登录并同意授权；回调由本机 mcporter 监听 <code>localhost:端口/callback</code>，请在与运行 mcporter <strong>同一台机器</strong>的浏览器中完成（或通过远程桌面在服务器上打开链接）。';
         const step3 =
             authInfo.consensusMcporterAuthUseConfig === true
                 ? `授权成功后，凭据将直接写入项目配置 <code>${cfgPath}</code>。`
@@ -2641,7 +2641,7 @@ function showAuthModal(authUrl, authInfo) {
                             <i class="fas fa-terminal" style="color: #d97706;"></i>
                             <strong>mcporter OAuth：</strong>调试日志中的授权链接已填入下方。${authInfo.consensusOAuthRedirectUrl
                                 ? `回调已配置为 <code>${authInfo.consensusOAuthRedirectUrl}</code>，请确认宿主机端口映射与浏览器可访问该地址。`
-                                : 'OAuth 回调由 mcporter 绑定本机 <code>127.0.0.1</code> 随机端口，请在<strong>运行 AIClient 与 mcporter 的服务器本机</strong>浏览器中打开（勿仅用无法访问该端口的远程浏览器，除非使用远程桌面）。'}
+                                : 'OAuth 回调由 mcporter 绑定本机 <code>localhost</code> 随机端口，请在<strong>运行 AIClient 与 mcporter 的服务器本机</strong>浏览器中打开（勿仅用无法访问该端口的远程浏览器，除非使用远程桌面）。'}
                         </p>
                     </div>
                     ` : ''}

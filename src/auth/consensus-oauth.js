@@ -495,7 +495,7 @@ function stopPreviousMcporterAuth() {
 }
 
 /**
- * 启动 mcporter OAuth：解析 debug 输出中的授权链接供前端弹窗使用，并保持子进程以完成 127.0.0.1 回调。
+ * 启动 mcporter OAuth：解析 debug 输出中的授权链接供前端弹窗使用，并保持子进程以完成 localhost 回调。
  * 链路：客户端 → AIClient-2-API（Consensus 提供商）→ mcporter → Consensus 官方 MCP。
  */
 export async function handleConsensusOAuth(currentConfig, options = {}) {
@@ -705,14 +705,14 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         }
         const hint401 =
             /401|unauthorized|Non-200 status/i.test(buffer)
-                ? ' 日志中出现 401：可尝试升级 mcporter（`npm i -g mcporter@latest`）、保持默认不传 --config，并确保 OAuth 回调可达运行 mcporter 的 127.0.0.1。'
+                ? ' 日志中出现 401：可尝试升级 mcporter（`npm i -g mcporter@latest`）、保持默认不传 --config，并确保 OAuth 回调可达运行 mcporter 的 localhost。'
                 : '';
         throw new Error(
             `未在 mcporter 调试输出中解析到 Consensus 授权链接。请确认可访问 https://mcp.consensus.app/mcp 且 mcporter 版本较新。${hint401}`
         );
     }
 
-    // 保持子进程存活以监听 redirect_uri（127.0.0.1:端口/callback），不阻塞 Node 事件循环退出计数
+    // 保持子进程存活以监听 redirect_uri（localhost:端口/callback），不阻塞 Node 事件循环退出计数
     child.unref();
 
     const relNorm = normalizePath(relConfig.replace(/\\/g, '/'));
@@ -820,7 +820,7 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
             consensusOAuthRedirectUrl: oauthRedirectUrl || undefined,
             oauthSecretsLogEnabled: isConsensusOAuthSecretsLogEnabled(),
             instructions: authUseConfig
-                ? '请点击页面上的授权链接在新窗口打开并完成 Consensus 登录。授权回调由运行 mcporter 的进程监听（通常为 127.0.0.1）。若在 Docker 内启动授权，浏览器回调可能无法到达容器内回环：可在宿主机对同一份 mcporter.json 执行 `mcporter auth consensus --config <路径>` 完成登录后再挂载凭据，或使用 host 网络/端口映射。'
+                ? '请点击页面上的授权链接在新窗口打开并完成 Consensus 登录。授权回调由运行 mcporter 的进程监听（通常为 localhost）。若在 Docker 内启动授权，浏览器回调可能无法到达容器内回环：可在宿主机对同一份 mcporter.json 执行 `mcporter auth consensus --config <路径>` 完成登录后再挂载凭据，或使用 host 网络/端口映射。'
                 : '第一步：点击「在浏览器中打开」完成 Consensus 登录（服务器端不会自动弹系统浏览器）。第二步：登录成功后，mcporter 将 OAuth 凭据写入默认配置（如 ~/.mcporter/mcporter.json），本服务会合并到项目 mcporter.json。Docker 请预先配置 CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL（或等价写入 ~/.mcporter/mcporter.json）并映射回调端口。若需凭据直接写入项目文件可设 CONSENSUS_MCPORTER_AUTH_USE_CONFIG=1（将使用 --config）。',
         },
     };
