@@ -25,6 +25,10 @@ RUN apk add --no-cache tar git procps
 # 设置工作目录；HOME=/app 使 mcporter OAuth 数据落在 /app/.mcporter（credentials.json 等），便于 compose 卷挂载持久化
 ENV HOME=/app
 
+# Consensus MCP OAuth 回调：由 api-server 进程在启动时自动创建持久 HTTP Hub（见 src/services/api-server.js），无需 Dockerfile 再启独立进程。
+# 未使用 compose 时可用作默认；compose/docker run 仍可通过 -e 覆盖。
+ENV CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL=http://127.0.0.1:19876/callback
+
 # 设置工作目录
 WORKDIR /app
 

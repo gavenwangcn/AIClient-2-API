@@ -294,7 +294,24 @@ async function startServer() {
     // Initialize API services
     const services = await initApiService(CONFIG, true);
 
-    await startConsensusOAuthCallbackPlaceholderIfConfigured(logger);
+    logger.info('[Initialization] Consensus OAuth: 正在尝试启动持久回调 Hub（见 [Consensus OAuth Hub] 日志）…');
+    let consensusHubStarted = false;
+    try {
+        consensusHubStarted = (await startConsensusOAuthCallbackPlaceholderIfConfigured(logger)) === true;
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        logger.error(`[Initialization] Consensus OAuth Hub 启动异常: ${msg}`);
+        consensusHubStarted = false;
+    }
+    if (consensusHubStarted) {
+        logger.info(
+            '[Initialization] Consensus OAuth 回调 Hub: 已就绪（容器内应能看到 0.0.0.0:端口 LISTEN；无 ss 时用上方 curl 自测）'
+        );
+    } else {
+        logger.warn(
+            '[Initialization] Consensus OAuth 回调 Hub: 未启动 — 首次授权时可能使用独立回调监听；请查看 [Consensus OAuth Hub] 原因说明'
+        );
+    }
 
     // Initialize UI management features
     initializeUIManagement(CONFIG);

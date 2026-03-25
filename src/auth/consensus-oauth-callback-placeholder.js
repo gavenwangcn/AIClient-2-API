@@ -71,37 +71,58 @@ async function dispatch(req, res) {
  * @returns {Promise<boolean>} 是否已有或成功启动 Hub
  */
 export async function ensureConsensusOAuthCallbackHubStarted(log) {
+    const L = log ?? { info: () => {}, warn: () => {}, error: () => {} };
+    L.info('[Consensus OAuth Hub] ========== OAuth 回调 HTTP（持久监听）启动检查 ==========');
+
     if (hubServer) {
+        const addr = hubServer.address();
+        L.info(
+            `[Consensus OAuth Hub] already running address=${typeof addr === 'object' && addr ? JSON.stringify(addr) : String(addr)}`
+        );
         return true;
     }
+
     const raw = getConsensusOAuthRedirectUrlFromEnv();
+    L.info(
+        `[Consensus OAuth Hub] env CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL=${raw ? `"${raw}"` : '(未设置/空，将不启动 Hub)'}`
+    );
+
     if (!raw) {
-        log?.info?.('[Consensus OAuth Hub] skip: CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL empty');
+        L.info('[Consensus OAuth Hub] 结果: 未启动 — 原因: 环境变量未设置。Docker 请在 compose 中设置该变量并映射端口。');
         return false;
     }
+
     let u;
     try {
         u = new URL(raw);
     } catch {
-        log?.warn?.('[Consensus OAuth Hub] skip: invalid redirect URL');
+        L.warn('[Consensus OAuth Hub] 结果: 未启动 — 原因: redirect URL 无法解析');
         return false;
     }
+
     const portStr = u.port;
     const port = portStr ? Number.parseInt(portStr, 10) : NaN;
     if (!Number.isFinite(port) || port <= 0) {
-        log?.info?.(
-            '[Consensus OAuth Hub] skip: need explicit port in redirect URL (e.g. http://127.0.0.1:19876/callback)'
+        L.info(
+            '[Consensus OAuth Hub] 结果: 未启动 — 原因: URL 中缺少显式端口（需形如 http://127.0.0.1:19876/callback）'
         );
         return false;
     }
+
     const listenHost = u.hostname || '127.0.0.1';
     const bindHost = bindHostForOAuthListen(listenHost);
     const callbackPath = u.pathname && u.pathname !== '/' ? u.pathname : '/callback';
     hubCallbackPath = callbackPath;
 
+    L.info(
+        `[Consensus OAuth Hub] 将绑定 bindHost=${bindHost} port=${port} path=${callbackPath}（Docker 请映射宿主机端口 -> 容器 ${port}）`
+    );
+
     const free = await probeTcpPortAvailable(bindHost, port);
     if (!free) {
-        log?.info?.(`[Consensus OAuth Hub] skip: port ${port} already in use`);
+        L.warn(
+            `[Consensus OAuth Hub] 结果: 未启动 — 原因: 本机探测端口 ${port} 已被占用（probeTcpPortAvailable=false）。请检查是否有其他进程占用。`
+        );
         return false;
     }
 
@@ -109,16 +130,29 @@ export async function ensureConsensusOAuthCallbackHubStarted(log) {
         void dispatch(req, res);
     });
 
-    await new Promise((resolve, reject) => {
-        server.once('error', reject);
-        server.listen(port, bindHost, () => {
-            server.removeListener('error', reject);
-            resolve(undefined);
+    try {
+        await new Promise((resolve, reject) => {
+            server.once('error', reject);
+            server.listen(port, bindHost, () => {
+                server.removeListener('error', reject);
+                resolve(undefined);
+            });
         });
-    });
+    } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        L.error(`[Consensus OAuth Hub] 结果: 未启动 — listen 失败: ${msg}`);
+        return false;
+    }
+
     hubServer = server;
-    log?.info?.(
-        `[Consensus OAuth Hub] persistent listen bindHost=${bindHost} port=${port} path=${callbackPath}`
+    const addr = server.address();
+    const addrStr = typeof addr === 'object' && addr && 'port' in addr ? JSON.stringify(addr) : String(addr);
+    L.info(`[Consensus OAuth Hub] 结果: 已启动 — Node 监听 address=${addrStr}`);
+    L.info(
+        `[Consensus OAuth Hub] 容器内自测: curl -s -o /dev/null -w "HTTP %{http_code}\\n" "http://127.0.0.1:${port}${callbackPath}"`
+    );
+    L.info(
+        `[Consensus OAuth Hub] 查看监听(需镜像含 ss): ss -tlnp | grep ${port} 或 netstat -tlnp 2>/dev/null | grep ${port}`
     );
     return true;
 }
