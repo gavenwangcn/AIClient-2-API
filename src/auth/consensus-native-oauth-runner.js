@@ -41,6 +41,11 @@ export function buildConsensusServerDefinition(serverName, mcpUrl, oauthRedirect
  * 取消进行中的原生 OAuth：关闭回调 HTTP（释放监听端口）、关闭 transport，使 waitForAuthorizationCode 失败。
  * @param {{ info?: (m: string) => void }} [log]
  */
+/** 是否存在本会话尚未结束的 OAuth 回调监听（与 mcporter 并跑时仍可能占用同端口，生成授权前会先关闭） */
+export function hasActiveConsensusOAuthSession() {
+    return activeNativeHandle !== null;
+}
+
 export async function cancelConsensusNativeOAuthSession(log) {
     if (pendingAuthUrlReject) {
         try {
@@ -82,6 +87,16 @@ export async function startConsensusNativeOAuth(opts) {
         oauthTimeoutMs = DEFAULT_OAUTH_CODE_TIMEOUT_MS,
         urlCaptureTimeoutMs = 45_000,
     } = opts;
+
+    const hadExistingListener = activeNativeHandle !== null;
+    await cancelConsensusNativeOAuthSession(appLogger);
+    if (hadExistingListener) {
+        appLogger.info(
+            '[Consensus Native OAuth] 生成授权：已关闭本会话上一轮的回调 HTTP，避免重复占用端口后再启动新监听'
+        );
+    } else {
+        appLogger.info('[Consensus Native OAuth] 生成授权：无未结束的回调监听，将开启新的回调 HTTP');
+    }
 
     const definition = buildConsensusServerDefinition(serverName, mcpUrl, oauthRedirectUrl, tokenCacheDirAbs);
 

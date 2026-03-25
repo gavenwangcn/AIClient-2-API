@@ -500,7 +500,7 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         logger.info(`[Consensus OAuth] mirrored server entry to mcporter home config: ${homeMcporterJson}`);
     }
 
-    await cancelConsensusNativeOAuthSession(logger);
+    /** 回调 HTTP 的启停由 startConsensusNativeOAuth 内统一处理：先 cancel 再 listen，避免重复监听 */
     if (activePollTimer) {
         clearInterval(activePollTimer);
         activePollTimer = null;

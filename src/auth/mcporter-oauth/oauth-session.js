@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { URL } from 'node:url';
 import { buildOAuthPersistence } from './oauth-persistence.js';
+import { probeTcpPortAvailable } from './oauth-callback-port.js';
 
 /**
  * @typedef {{ info: (m: string) => void, warn: (m: string) => void, error: (m: string, e?: unknown) => void }} OAuthLogger
@@ -100,7 +101,6 @@ class PersistentOAuthClientProvider {
     static async create(definition, logger, hooks = {}) {
         const persistence = await buildOAuthPersistence(definition, logger);
 
-        const server = http.createServer();
         const overrideRedirect = definition.oauthRedirectUrl ? new URL(definition.oauthRedirectUrl) : null;
         const listenHost = overrideRedirect?.hostname ?? CALLBACK_HOST;
         const overridePort = overrideRedirect?.port ?? '';
@@ -108,6 +108,23 @@ class PersistentOAuthClientProvider {
         const desiredPort = usesDynamicPort ? undefined : Number.parseInt(overridePort, 10);
         const callbackPath =
             overrideRedirect?.pathname && overrideRedirect.pathname !== '/' ? overrideRedirect.pathname : CALLBACK_PATH;
+
+        if (!usesDynamicPort && desiredPort !== undefined && Number.isFinite(desiredPort)) {
+            const free = await probeTcpPortAvailable(listenHost, desiredPort);
+            if (!free) {
+                logger.info(
+                    `[Native OAuth] 固定回调端口已被占用，不开启新的回调监听 host=${listenHost} port=${desiredPort}（请结束占用进程或更换 oauthRedirectUrl）`
+                );
+                throw new Error(
+                    `OAuth 回调地址端口已被占用：${listenHost}:${desiredPort}。请关闭占用该端口的进程，或修改 CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL / mcporter.json 中的 oauthRedirectUrl。`
+                );
+            }
+            logger.info(
+                `[Native OAuth] 固定回调端口探测可用，将绑定回调 HTTP host=${listenHost} port=${desiredPort}`
+            );
+        }
+
+        const server = http.createServer();
 
         const port = await new Promise((resolve, reject) => {
             server.listen(desiredPort ?? 0, listenHost, () => {
@@ -118,7 +135,21 @@ class PersistentOAuthClientProvider {
                     reject(new Error('Failed to determine callback port'));
                 }
             });
-            server.once('error', (error) => reject(error));
+            server.once('error', (error) => {
+                const code = /** @type {NodeJS.ErrnoException} */ (error).code;
+                if (code === 'EADDRINUSE') {
+                    logger.info(
+                        `[Native OAuth] listen 失败 EADDRINUSE host=${listenHost} port=${desiredPort ?? 'dynamic'}`
+                    );
+                    reject(
+                        new Error(
+                            `OAuth 回调端口绑定失败（已被占用）：${listenHost}:${desiredPort ?? '?'}. 请更换端口或结束占用进程。`
+                        )
+                    );
+                    return;
+                }
+                reject(error);
+            });
         });
 
         const redirectUrl = overrideRedirect ? new URL(overrideRedirect.toString()) : new URL(`http://${listenHost}:${port}${callbackPath}`);
