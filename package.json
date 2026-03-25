@@ -1,10 +1,11 @@
 {
   "type": "module",
   "dependencies": {
-    "better-sqlite3": "^11.8.1",
     "@anthropic-ai/tokenizer": "^0.0.4",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "adm-zip": "^0.5.16",
     "axios": "^1.10.0",
+    "better-sqlite3": "^11.8.1",
     "deepmerge": "^4.3.1",
     "dotenv": "^16.4.5",
     "google-auth-library": "^10.1.0",

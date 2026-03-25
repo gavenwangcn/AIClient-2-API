@@ -11,7 +11,8 @@ import {
     batchImportCodexTokensStream,
     batchImportKiroRefreshTokensStream,
     importAwsCredentials,
-    handleConsensusOAuth
+    handleConsensusOAuth,
+    cancelConsensusMcporterAuth
 } from '../auth/oauth-handlers.js';
 
 /**
@@ -21,6 +22,7 @@ export async function handleGenerateAuthUrl(req, res, currentConfig, providerTyp
     try {
         let authUrl = '';
         let authInfo = {};
+        let consensusAlreadyAuthed = false;
         
         // 解析 options
         let options = {};
@@ -63,6 +65,7 @@ export async function handleGenerateAuthUrl(req, res, currentConfig, providerTyp
             const result = await handleConsensusOAuth(currentConfig, options);
             authUrl = result.authUrl;
             authInfo = result.authInfo;
+            consensusAlreadyAuthed = result.alreadyAuthed === true;
         } else {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
@@ -74,11 +77,14 @@ export async function handleGenerateAuthUrl(req, res, currentConfig, providerTyp
         }
         
         res.writeHead(200, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({
-            success: true,
-            authUrl: authUrl,
-            authInfo: authInfo
-        }));
+        res.end(
+            JSON.stringify({
+                success: true,
+                authUrl: authUrl,
+                alreadyAuthed: consensusAlreadyAuthed,
+                authInfo: authInfo,
+            })
+        );
         return true;
         
     } catch (error) {
@@ -90,6 +96,29 @@ export async function handleGenerateAuthUrl(req, res, currentConfig, providerTyp
                 message: `Failed to generate auth URL: ${errMsg}`,
             },
         }));
+        return true;
+    }
+}
+
+/**
+ * 关闭 Consensus 授权弹框时终止原生 OAuth 会话及轮询（释放回调端口）。
+ */
+export async function handleCancelConsensusAuth(req, res, providerType) {
+    try {
+        if (providerType !== 'consensus-mcp-oauth') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: false, error: { message: 'Only consensus-mcp-oauth supports cancel-auth' } }));
+            return true;
+        }
+        cancelConsensusMcporterAuth();
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Consensus native OAuth cancelled' }));
+        return true;
+    } catch (error) {
+        const errMsg = error && typeof error.message === 'string' ? error.message : String(error);
+        logger.error(`[UI API] cancel consensus auth: ${errMsg}`);
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: false, error: { message: errMsg } }));
         return true;
     }
 }

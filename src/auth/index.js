@@ -35,4 +35,4 @@ export {
 } from './iflow-oauth.js';
 
 // Consensus MCP (mcporter OAuth)
-export { handleConsensusOAuth } from './consensus-oauth.js';
+export { handleConsensusOAuth, cancelConsensusMcporterAuth } from './consensus-oauth.js';

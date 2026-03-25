@@ -217,6 +217,13 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await providerApi.handleDeleteProvider(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
     }
 
+    // Cancel in-flight Consensus mcporter OAuth (close UI modal)
+    const cancelAuthMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/cancel-auth$/);
+    if (method === 'POST' && cancelAuthMatch) {
+        const providerType = decodeURIComponent(cancelAuthMatch[1]);
+        return await oauthApi.handleCancelConsensusAuth(req, res, providerType);
+    }
+
     // Generate OAuth authorization URL for providers
     const generateAuthUrlMatch = pathParam.match(/^\/api\/providers\/([^\/]+)\/generate-auth-url$/);
     if (method === 'POST' && generateAuthUrlMatch) {

@@ -2484,6 +2484,15 @@ async function executeGenerateAuthUrl(providerType, extraOptions = {}) {
             }
         );
         
+        if (response.success && response.alreadyAuthed) {
+            const msg =
+                response.authInfo && response.authInfo.instructions
+                    ? response.authInfo.instructions
+                    : t('modal.provider.auth.success');
+            showToast(t('common.success'), msg, 'success');
+            return;
+        }
+
         if (response.success && response.authUrl) {
             // 如果提供了 targetInputId，设置成功监听器
             if (extraOptions.targetInputId) {
@@ -2744,14 +2753,33 @@ function showAuthModal(authUrl, authInfo) {
     `;
     
     document.body.appendChild(modal);
+
+    /** Consensus MCP：关闭弹框时通知服务端终止 `mcporter auth` 子进程，释放 OAuth 回调监听 */
+    const cancelConsensusMcporterIfNeeded = async () => {
+        if (authInfo.provider !== 'consensus-mcp-oauth' || !window.apiClient) return;
+        try {
+            await window.apiClient.post('/providers/consensus-mcp-oauth/cancel-auth', {});
+        } catch (e) {
+            console.warn('[OAuth] cancel consensus mcporter:', e);
+        }
+    };
+    const dismissAuthModal = async () => {
+        await cancelConsensusMcporterIfNeeded();
+        modal.remove();
+    };
     
     // 关闭按钮事件
     const closeBtn = modal.querySelector('.modal-close');
     const cancelBtn = modal.querySelector('.modal-cancel');
     [closeBtn, cancelBtn].forEach(btn => {
         btn.addEventListener('click', () => {
-            modal.remove();
+            dismissAuthModal();
         });
+    });
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) {
+            dismissAuthModal();
+        }
     });
     
     // 重新生成按钮事件（端口或回调地址变更时）
@@ -2764,6 +2792,7 @@ function showAuthModal(authUrl, authInfo) {
         const prevVal = authInfo.callbackUrl || authInfo.callbackHost || 'localhost';
         const hostChanged = hostInput && newVal && newVal !== prevVal;
         if (portChanged || hostChanged) {
+            await cancelConsensusMcporterIfNeeded();
             modal.remove();
             const options = { ...authInfo, port: newPort };
             if (hostInput && newVal) {
@@ -2790,6 +2819,7 @@ function showAuthModal(authUrl, authInfo) {
         regenerateBuilderIdBtn.onclick = async () => {
             const builderIdStartUrl = modal.querySelector('.builder-id-start-url-input').value.trim();
             const region = modal.querySelector('.builder-id-region-input').value.trim();
+            await cancelConsensusMcporterIfNeeded();
             modal.remove();
             // 构造重新请求的参数
             const options = {

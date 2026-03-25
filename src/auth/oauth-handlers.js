@@ -26,4 +26,5 @@ export {
     refreshIFlowTokens,
     // Consensus MCP
     handleConsensusOAuth,
+    cancelConsensusMcporterAuth,
 } from './index.js';
