@@ -143,6 +143,7 @@ export class ConsensusApiService {
         const next = {
             ...(existing && typeof existing === 'object' ? existing : {}),
             url: this.mcpUrl,
+            auth: 'oauth',
         };
         if (redirect) {
             next.oauthRedirectUrl = redirect;

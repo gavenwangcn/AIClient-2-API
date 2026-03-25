@@ -107,6 +107,8 @@ export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcp
     const entry = {
         ...(prev && typeof prev === 'object' ? prev : {}),
         url: mcpUrl,
+        /** 显式 OAuth：mcporter 会先于首次 HTTP 连接建立 OAuth 会话并打印浏览器授权链接；省略时易先走 Streamable/SSE 匿名请求导致 401 且来不及进入浏览器流（Docker 中常见）。 */
+        auth: 'oauth',
     };
     if (trimmedRedirect) {
         entry.oauthRedirectUrl = trimmedRedirect;
