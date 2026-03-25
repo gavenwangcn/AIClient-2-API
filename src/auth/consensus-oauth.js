@@ -143,6 +143,7 @@ export function looksLikeMcporterAuthed(content) {
     const lower = content.toLowerCase();
     return (
         lower.includes('access_token') ||
+        lower.includes('accesstoken') ||
         lower.includes('refreshtoken') ||
         lower.includes('refresh_token') ||
         lower.includes('"oauth"') ||
@@ -757,13 +758,6 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
                     return;
                 }
             }
-            const st = fs.statSync(absConfig);
-            if (st.mtimeMs <= baseline && Date.now() - started < 3000) {
-                logger.info(
-                    `[Consensus OAuth] poll tick=${pollTick} skip early: mtime not past baseline yet (mtimeMs=${st.mtimeMs} baseline=${baseline})`
-                );
-                return;
-            }
             if (looksLikeMcporterAuthed(text)) {
                 clearInterval(activePollTimer);
                 activePollTimer = null;
@@ -786,6 +780,13 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
                     });
                 } catch (e) {
                     logger.warn(`[Consensus OAuth] autoLinkProviderConfigs: ${e.message}`);
+                }
+            } else {
+                const st = fs.statSync(absConfig);
+                if (st.mtimeMs <= baseline && Date.now() - started < 3000) {
+                    logger.info(
+                        `[Consensus OAuth] poll tick=${pollTick} skip early: mtime not past baseline yet (mtimeMs=${st.mtimeMs} baseline=${baseline})`
+                    );
                 }
             }
         } catch (e) {

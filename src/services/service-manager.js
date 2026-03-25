@@ -13,6 +13,7 @@ import {
     getFileName,
     formatSystemPath
 } from '../utils/provider-utils.js';
+import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 import { MODEL_PROVIDER } from '../utils/common.js';
 
 // 存储 ProviderPoolManager 实例
@@ -34,13 +35,16 @@ export async function autoLinkProviderConfigs(config, options = {}) {
     
     let totalNewProviders = 0;
     const allNewProviders = {};
-    
+    /** @type {{ provider: object; displayName: string; providerType: string } | null} */
+    let singleLinkResult = null;
+
     // 如果只关联当前凭证
     if (options.onlyCurrentCred && options.credPath) {
         const result = await linkSingleCredential(config, options.credPath);
         if (result) {
             totalNewProviders = 1;
             allNewProviders[result.displayName] = [result.provider];
+            singleLinkResult = result;
         }
     } else {
         // 遍历所有提供商映射
@@ -93,13 +97,29 @@ export async function autoLinkProviderConfigs(config, options = {}) {
             for (const [displayName, providers] of Object.entries(allNewProviders)) {
                 logger.info(`  ${displayName}: ${providers.length} config(s)`);
                 providers.forEach(p => {
-                    // 获取凭据路径键（支持 _CREDS_FILE_PATH 和 _TOKEN_FILE_PATH 两种格式）
-                    const credKey = Object.keys(p).find(k =>
-                        k.endsWith('_CREDS_FILE_PATH') || k.endsWith('_TOKEN_FILE_PATH')
+                    const credKey = Object.keys(p).find(
+                        (k) =>
+                            k.endsWith('_CREDS_FILE_PATH') ||
+                            k.endsWith('_TOKEN_FILE_PATH') ||
+                            k === 'CONSENSUS_MCPORTER_CONFIG_PATH'
                     );
                     if (credKey) {
                         logger.info(`    - ${p[credKey]}`);
                     }
+                });
+            }
+            if (singleLinkResult) {
+                broadcastEvent('provider_update', {
+                    action: 'add',
+                    providerType: singleLinkResult.providerType,
+                    providerConfig: singleLinkResult.provider,
+                    timestamp: new Date().toISOString(),
+                });
+                broadcastEvent('config_update', {
+                    action: 'auto_link',
+                    filePath,
+                    providerType: singleLinkResult.providerType,
+                    timestamp: new Date().toISOString(),
                 });
             }
         } catch (error) {
@@ -142,12 +162,12 @@ async function linkSingleCredential(config, credPath) {
             return null;
         }
         
-        // 根据文件路径确定提供商类型
+        // 根据文件路径确定提供商类型（用 relative 判断，避免 Windows 大小写/分隔符导致 startsWith 失败）
         let matchedMapping = null;
         for (const mapping of PROVIDER_MAPPINGS) {
             const configsPath = path.join(process.cwd(), 'configs', mapping.dirName);
-            // 检查文件是否在该提供商的配置目录下
-            if (absolutePath.startsWith(configsPath)) {
+            const relUnder = path.relative(path.normalize(configsPath), path.normalize(absolutePath));
+            if (relUnder && !relUnder.startsWith('..') && !path.isAbsolute(relUnder)) {
                 matchedMapping = mapping;
                 break;
             }
@@ -563,7 +583,8 @@ export async function getProviderStatus(config, options = {}) {
         'gemini-antigravity': 'ANTIGRAVITY_OAUTH_CREDS_FILE_PATH',
         'openai-iflow': 'IFLOW_TOKEN_FILE_PATH',
         'forward-api': 'FORWARD_BASE_URL',
-        'grok-custom': 'GROK_COOKIE_TOKEN'
+        'grok-custom': 'GROK_COOKIE_TOKEN',
+        'consensus-mcp-oauth': 'CONSENSUS_MCPORTER_CONFIG_PATH'
     };
     let providerPoolsSlim = [];
     let unhealthyProvideIdentifyList = [];
