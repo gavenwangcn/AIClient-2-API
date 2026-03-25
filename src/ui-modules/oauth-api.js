@@ -110,7 +110,7 @@ export async function handleCancelConsensusAuth(req, res, providerType) {
             res.end(JSON.stringify({ success: false, error: { message: 'Only consensus-mcp-oauth supports cancel-auth' } }));
             return true;
         }
-        cancelConsensusMcporterAuth();
+        await cancelConsensusMcporterAuth();
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true, message: 'Consensus native OAuth cancelled' }));
         return true;

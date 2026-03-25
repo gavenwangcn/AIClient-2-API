@@ -38,10 +38,10 @@ export function buildConsensusServerDefinition(serverName, mcpUrl, oauthRedirect
 }
 
 /**
- * 取消进行中的原生 OAuth：关闭回调 HTTP、关闭 transport，使 waitForAuthorizationCode 失败。
+ * 取消进行中的原生 OAuth：关闭回调 HTTP（释放监听端口）、关闭 transport，使 waitForAuthorizationCode 失败。
  * @param {{ info?: (m: string) => void }} [log]
  */
-export function cancelConsensusNativeOAuthSession(log) {
+export async function cancelConsensusNativeOAuthSession(log) {
     if (pendingAuthUrlReject) {
         try {
             pendingAuthUrlReject(new Error('OAuth cancelled'));
@@ -54,12 +54,12 @@ export function cancelConsensusNativeOAuthSession(log) {
     const h = activeNativeHandle;
     activeNativeHandle = null;
     if (h?.session) {
-        h.session.close().catch(() => {});
+        await h.session.close().catch(() => {});
     }
     if (h?.transport) {
-        h.transport.close().catch(() => {});
+        await h.transport.close().catch(() => {});
     }
-    log?.info?.('[Consensus Native OAuth] cancel: native session/transport close requested');
+    log?.info?.('[Consensus Native OAuth] cancel: callback HTTP server closed and transport closed');
 }
 
 /**

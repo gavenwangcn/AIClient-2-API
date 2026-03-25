@@ -425,15 +425,15 @@ async function tryMergeMcporterOAuthIntoProject(absConfigPath, serverName, mcpUr
 let activePollTimer = null;
 
 /**
- * 用户取消授权 UI 或关闭弹框时调用：结束轮询并关闭原生 OAuth 回调 HTTP / MCP 传输。
+ * 用户取消授权 UI 或关闭弹框时调用：结束轮询并关闭原生 OAuth 回调 HTTP（释放 TCP 端口）与 MCP 传输。
  */
-export function cancelConsensusMcporterAuth() {
+export async function cancelConsensusMcporterAuth() {
     if (activePollTimer) {
         clearInterval(activePollTimer);
         activePollTimer = null;
         logger.info('[Consensus OAuth] cancel: cleared credential poll timer');
     }
-    cancelConsensusNativeOAuthSession(logger);
+    await cancelConsensusNativeOAuthSession(logger);
     logger.info('[Consensus OAuth] cancel: native OAuth session stopped');
 }
 
@@ -500,7 +500,7 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         logger.info(`[Consensus OAuth] mirrored server entry to mcporter home config: ${homeMcporterJson}`);
     }
 
-    cancelConsensusNativeOAuthSession(logger);
+    await cancelConsensusNativeOAuthSession(logger);
     if (activePollTimer) {
         clearInterval(activePollTimer);
         activePollTimer = null;
