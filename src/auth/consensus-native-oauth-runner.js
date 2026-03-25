@@ -157,10 +157,21 @@ export async function startConsensusNativeOAuth(opts) {
     });
 
     const client = new Client({ name: 'aiclient-consensus-oauth', version: '1.0.0' });
-    const transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
+    let transport = new StreamableHTTPClientTransport(new URL(mcpUrl), {
         requestInit: undefined,
         authProvider: session.provider,
     });
+
+    const recreateTransport = () => {
+        const next = new StreamableHTTPClientTransport(new URL(mcpUrl), {
+            requestInit: undefined,
+            authProvider: session.provider,
+        });
+        if (activeNativeHandle?.session === session) {
+            activeNativeHandle = { session, transport: next };
+        }
+        return next;
+    };
 
     activeNativeHandle = { session, transport };
 
@@ -170,11 +181,15 @@ export async function startConsensusNativeOAuth(opts) {
 
     const flowPromise = (async () => {
         try {
-            await connectWithAuth(client, transport, session, oauthLogger, {
+            transport = await connectWithAuth(client, transport, session, oauthLogger, {
                 serverName,
                 maxAttempts: 3,
                 oauthTimeoutMs,
+                recreateTransport,
             });
+            if (activeNativeHandle?.session === session) {
+                activeNativeHandle = { session, transport };
+            }
             appLogger.info('[Consensus Native OAuth] client.connect succeeded (OAuth finished or cached credentials worked)');
             const access = await readCachedAccessToken(definition, oauthLogger);
             if (!access) {

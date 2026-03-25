@@ -91,15 +91,28 @@ export function isUnauthorizedError(error) {
  * @param {import('@modelcontextprotocol/sdk/shared/transport.js').Transport & { close(): Promise<void>, finishAuth?: (c: string) => Promise<void> }} transport
  * @param {{ waitForAuthorizationCode: () => Promise<string>, close?: () => Promise<void>, provider?: unknown } | undefined} session
  * @param {{ info?: Function, warn?: Function, error?: Function }} logger
- * @param {{ serverName?: string, maxAttempts?: number, oauthTimeoutMs?: number }} [options]
+ * @param {{
+ *   serverName?: string,
+ *   maxAttempts?: number,
+ *   oauthTimeoutMs?: number,
+ *   recreateTransport?: () => import('@modelcontextprotocol/sdk/shared/transport.js').Transport & { close(): Promise<void>, finishAuth?: (c: string) => Promise<void> },
+ * }} [options] finishAuth 后需 recreateTransport：SDK 的 StreamableHTTP close 后仍无法再次 start（与官方 simpleOAuthClient 一致）。
+ * @returns {Promise<typeof transport>} 成功连接后使用的 transport（若发生过 OAuth，可能是 `recreateTransport()` 的新实例）
  */
 export async function connectWithAuth(client, transport, session, logger, options = {}) {
-    const { serverName, maxAttempts = 3, oauthTimeoutMs = DEFAULT_OAUTH_CODE_TIMEOUT_MS } = options;
+    const {
+        serverName,
+        maxAttempts = 3,
+        oauthTimeoutMs = DEFAULT_OAUTH_CODE_TIMEOUT_MS,
+        recreateTransport,
+    } = options;
     let attempt = 0;
+    /** @type {typeof transport} */
+    let t = transport;
     while (true) {
         try {
-            await client.connect(transport);
-            return;
+            await client.connect(t);
+            return t;
         } catch (error) {
             if (!isUnauthorizedError(error) || !session) {
                 throw error;
@@ -113,9 +126,19 @@ export async function connectWithAuth(client, transport, session, logger, option
             );
             try {
                 const code = await waitForAuthorizationCodeWithTimeout(session, logger, serverName, oauthTimeoutMs);
-                if (typeof transport.finishAuth === 'function') {
-                    await transport.finishAuth(code);
+                if (typeof t.finishAuth === 'function') {
+                    await t.finishAuth(code);
                     logger.info?.('Authorization code accepted. Retrying connection...');
+                    if (typeof recreateTransport === 'function') {
+                        await t.close().catch(() => {});
+                        await client.close().catch(() => {});
+                        t = /** @type {typeof t} */ (recreateTransport());
+                    } else {
+                        logger.warn?.(
+                            'OAuth: finishAuth 后未提供 recreateTransport；同一 StreamableHTTP 实例无法再次 connect（SDK 限制）。'
+                        );
+                        throw error;
+                    }
                 } else {
                     logger.warn?.('Transport does not support finishAuth; cannot complete OAuth flow automatically.');
                     throw error;

@@ -1,10 +1,8 @@
-import { spawn } from 'child_process';
-import * as path from 'path';
 import { getRequestBody } from '../../utils/common.js';
 import { MODEL_PROVIDER } from '../../utils/common.js';
 import logger from '../../utils/logger.js';
 import { getApiService } from '../../services/service-manager.js';
-import { getMcporterExecutable } from './consensus-mcp-utils.js';
+import { normalizeToolsListResult, runMcporterListJson } from './consensus-mcporter-list-cli.js';
 import { createApiTraceLogger } from '../../utils/api-trace-logger.js';
 
 function createConsensusMcpTrace(method, pathName) {
@@ -24,53 +22,6 @@ function createConsensusMcpTrace(method, pathName) {
 
 /** MCP 协议版本（与 MCP 规范 JSON-RPC 传输一致） */
 const MCP_PROTOCOL_VERSION = '2024-11-05';
-
-function runMcporterList(bin, configPath, extraArgs = []) {
-    const abs = path.isAbsolute(configPath)
-        ? configPath
-        : path.resolve(process.cwd(), configPath);
-    const args = ['--config', abs, '--log-level', 'error', 'list', ...extraArgs, '--json'];
-    logger.info(`[Consensus MCP] mcporter list bin=${bin} config=${abs} extraArgs=${JSON.stringify(extraArgs)}`);
-    const t0 = Date.now();
-    return new Promise((resolve, reject) => {
-        const proc = spawn(bin, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
-        logger.info(`[Consensus MCP] mcporter list pid=${proc.pid ?? 'n/a'}`);
-        let stdout = '';
-        let stderr = '';
-        proc.stdout.on('data', (d) => { stdout += d.toString(); });
-        proc.stderr.on('data', (d) => { stderr += d.toString(); });
-        proc.on('error', (e) => {
-            logger.info(`[Consensus MCP] mcporter list spawn error: ${e.message}`);
-            reject(e);
-        });
-        proc.on('close', (code) => {
-            const ms = Date.now() - t0;
-            if (code !== 0) {
-                logger.info(
-                    `[Consensus MCP] mcporter list failed code=${code} durationMs=${ms} stderrPreview=${JSON.stringify(stderr.slice(0, 800))}`
-                );
-                reject(new Error(stderr || stdout || `mcporter list exited ${code}`));
-                return;
-            }
-            logger.info(`[Consensus MCP] mcporter list ok durationMs=${ms} stdoutLen=${stdout.length}`);
-            try {
-                resolve(stdout.trim() ? JSON.parse(stdout.trim()) : {});
-            } catch {
-                resolve({ raw: stdout.trim() });
-            }
-        });
-    });
-}
-
-function normalizeToolsListResult(raw) {
-    if (raw == null) return { tools: [] };
-    if (Array.isArray(raw)) return { tools: raw };
-    if (typeof raw === 'object' && Array.isArray(raw.tools)) return raw;
-    if (typeof raw === 'object' && raw.tools && typeof raw.tools === 'object') {
-        return { tools: Object.values(raw.tools) };
-    }
-    return { tools: [] };
-}
 
 /**
  * MCP JSON-RPC 2.0：initialize / ping / tools/list / tools/call → mcporter → Consensus 官方 MCP
@@ -129,12 +80,14 @@ async function handleConsensusMcpJsonRpc(body, currentConfig) {
     }
 
     if (body.method === 'tools/list') {
-        const bin = getMcporterExecutable();
         const configPath = cfg.CONSENSUS_MCPORTER_CONFIG_PATH;
         if (!configPath) {
             return { jsonrpc: '2.0', id, error: { code: -32603, message: 'CONSENSUS_MCPORTER_CONFIG_PATH missing' } };
         }
-        const raw = await runMcporterList(bin, configPath, [serverName, '--schema']);
+        const raw = await runMcporterListJson(configPath, {
+            extraArgs: [serverName, '--schema'],
+            logTag: '[Consensus MCP]',
+        });
         const result = normalizeToolsListResult(raw);
         return { jsonrpc: '2.0', id, result };
     }
@@ -256,7 +209,6 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
             trace.startPhase('upstream', 'mcporter list --schema');
             const service = await getApiService(currentConfig, null, { skipUsageCount: true });
             const cfg = service.consensusApiService?.config || service.config;
-            const bin = getMcporterExecutable();
             const configPath = cfg.CONSENSUS_MCPORTER_CONFIG_PATH;
             const serverName = cfg.CONSENSUS_MCP_SERVER_NAME || 'consensus';
             if (!configPath) {
@@ -266,7 +218,10 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
                 res.end(JSON.stringify({ error: { message: 'CONSENSUS_MCPORTER_CONFIG_PATH missing' } }));
                 return true;
             }
-            const data = await runMcporterList(bin, configPath, [serverName, '--schema']);
+            const data = await runMcporterListJson(configPath, {
+                extraArgs: [serverName, '--schema'],
+                logTag: '[Consensus MCP]',
+            });
             trace.endPhase();
             trace.startPhase('respond', 'HTTP');
             const bodyStr = JSON.stringify(data);

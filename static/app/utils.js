@@ -192,6 +192,7 @@ function getFieldLabel(key) {
         'CONSENSUS_MCP_SERVER_NAME': 'MCP 服务器名称（mcporter）',
         'CONSENSUS_MCPORTER_TOKEN_CACHE_DIR': 'OAuth token 缓存目录（mcporter tokenCacheDir，默认同目录 oauth-cache）',
         'CONSENSUS_MCPORTER_TOKEN_CACHE_DISABLE': '禁用 tokenCacheDir（仅用 ~/.mcporter/credentials.json）',
+        'CONSENSUS_MCPORTER_POST_OAUTH_VERIFY': '设为 0 跳过 OAuth 成功后 mcporter list 自检',
         'GROK_BASE_URL': t('modal.provider.field.grokBaseUrl'),
         'FORWARD_API_KEY': 'Forward API Key',
         'FORWARD_BASE_URL': 'Forward Base URL',

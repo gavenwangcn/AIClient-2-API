@@ -7,6 +7,7 @@ import { autoLinkProviderConfigs } from '../services/service-manager.js';
 import { CONFIG } from '../core/config-manager.js';
 import { normalizePath } from '../utils/provider-utils.js';
 import { resolveConsensusTokenCacheDir } from '../providers/consensus/consensus-mcp-utils.js';
+import { verifyMcporterCliAfterOAuth } from '../providers/consensus/consensus-mcporter-list-cli.js';
 import { startConsensusNativeOAuth, cancelConsensusNativeOAuthSession } from './consensus-native-oauth-runner.js';
 
 const DEFAULT_MCP_URL = 'https://mcp.consensus.app/mcp';
@@ -548,6 +549,16 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
                 '[Consensus OAuth] OAuth 流程内确认：access_token 已落盘，合并项目配置并广播 oauth_success'
             );
             await tryMergeMcporterOAuthIntoProject(absConfig, serverName, mcpUrl);
+            const verify = await verifyMcporterCliAfterOAuth(absConfig, { serverName });
+            if (verify.ok && verify.skipped) {
+                /* 跳过原因已在 verify 内 INFO */
+            } else if (verify.ok) {
+                logger.info(
+                    `[Consensus OAuth] mcporter CLI 自检汇总: ok=true toolCount=${verify.toolCount}`
+                );
+            } else {
+                logger.info('[Consensus OAuth] mcporter CLI 自检汇总: ok=false（详见上方 [mcporter verify] WARN）');
+            }
             let text = '';
             try {
                 text = await fsp.readFile(absConfig, 'utf8');
