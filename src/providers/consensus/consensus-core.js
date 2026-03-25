@@ -178,7 +178,19 @@ export class ConsensusApiService {
             if (e.code !== 'ENOENT') throw e;
         }
 
-        data.mcpServers = data.mcpServers || {};
+        // 文件若被误写成单个 JSON 字符串（如仅 UUID），parse 后为非对象，无法挂 mcpServers
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+            logger.warn(
+                `[Consensus] mcporter config is not a JSON object (got ${data === null ? 'null' : typeof data}); ` +
+                    `resetting to {}. Path: ${abs}`
+            );
+            data = {};
+        }
+
+        data.mcpServers =
+            data.mcpServers && typeof data.mcpServers === 'object' && !Array.isArray(data.mcpServers)
+                ? data.mcpServers
+                : {};
         const redirect = String(
             this.config.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || process.env.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || ''
         ).trim();
