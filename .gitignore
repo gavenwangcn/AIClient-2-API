@@ -20,3 +20,5 @@ configs/codex/
 docker/mcporter-data/
 mcporter-data/
 
+# Consensus：mcporter tokenCacheDir 下的 tokens.json（与 vault 重复一份）
+configs/consensus/oauth-cache/

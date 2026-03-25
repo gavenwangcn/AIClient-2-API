@@ -3,7 +3,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promises as fsp } from 'fs';
 import logger from '../../utils/logger.js';
-import { getMcporterExecutable } from './consensus-mcp-utils.js';
+import { getMcporterExecutable, resolveConsensusTokenCacheDir } from './consensus-mcp-utils.js';
 
 const DEFAULT_MCP_URL = 'https://mcp.consensus.app/mcp';
 const DEFAULT_SERVER_NAME = 'consensus';
@@ -138,6 +138,7 @@ export class ConsensusApiService {
         const redirect = String(
             this.config.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || process.env.CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL || ''
         ).trim();
+        const tokenCacheDirAbs = resolveConsensusTokenCacheDir(abs, this.config);
         const existing = data.mcpServers[this.serverName];
         const next = {
             ...(existing && typeof existing === 'object' ? existing : {}),
@@ -146,6 +147,12 @@ export class ConsensusApiService {
         if (redirect) {
             next.oauthRedirectUrl = redirect;
         }
+        if (tokenCacheDirAbs) {
+            next.tokenCacheDir = tokenCacheDirAbs;
+            await fsp.mkdir(tokenCacheDirAbs, { recursive: true });
+        } else {
+            delete next.tokenCacheDir;
+        }
         const prevJson = JSON.stringify(existing || {});
         const nextJson = JSON.stringify(next);
         if (prevJson !== nextJson || !existing?.url) {
@@ -153,7 +160,8 @@ export class ConsensusApiService {
             await fsp.writeFile(abs, JSON.stringify(data, null, 2), 'utf8');
             logger.info(
                 `[Consensus] Wrote MCP server "${this.serverName}" -> ${this.mcpUrl} in ${abs}` +
-                    (redirect ? ` oauthRedirectUrl=${redirect}` : '')
+                    (redirect ? ` oauthRedirectUrl=${redirect}` : '') +
+                    (tokenCacheDirAbs ? ` tokenCacheDir=${tokenCacheDirAbs}` : ' (no tokenCacheDir)')
             );
         }
     }

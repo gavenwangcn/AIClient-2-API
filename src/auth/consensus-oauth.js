@@ -8,7 +8,7 @@ import { broadcastEvent } from '../ui-modules/event-broadcast.js';
 import { autoLinkProviderConfigs } from '../services/service-manager.js';
 import { CONFIG } from '../core/config-manager.js';
 import { normalizePath } from '../utils/provider-utils.js';
-import { getMcporterExecutable } from '../providers/consensus/consensus-mcp-utils.js';
+import { getMcporterExecutable, resolveConsensusTokenCacheDir } from '../providers/consensus/consensus-mcp-utils.js';
 
 const DEFAULT_MCP_URL = 'https://mcp.consensus.app/mcp';
 const DEFAULT_SERVER_NAME = 'consensus';
@@ -86,8 +86,9 @@ function isMcporterOAuthTerminalFailure(buf) {
 /**
  * 写入/合并 mcporter.json 中的 MCP 服务器定义
  * @param {string} [oauthRedirectUrl] - 若设置，写入 oauthRedirectUrl，供 mcporter 固定本机回调端口（见 mcporter 的 PersistentOAuthClientProvider）
+ * @param {string|null|undefined} [tokenCacheDirAbs] - 若传字符串，写入 `tokenCacheDir`（与 vault 同用，见 mcporter `buildOAuthPersistence`）；`null` 表示移除该字段；`undefined` 表示不修改已有值
  */
-export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcpUrl, oauthRedirectUrl = '') {
+export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcpUrl, oauthRedirectUrl = '', tokenCacheDirAbs) {
     const dir = path.dirname(absConfigPath);
     await fsp.mkdir(dir, { recursive: true });
 
@@ -110,6 +111,14 @@ export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcp
     if (trimmedRedirect) {
         entry.oauthRedirectUrl = trimmedRedirect;
     }
+    if (tokenCacheDirAbs !== undefined) {
+        if (tokenCacheDirAbs === null) {
+            delete entry.tokenCacheDir;
+        } else {
+            entry.tokenCacheDir = tokenCacheDirAbs;
+            await fsp.mkdir(tokenCacheDirAbs, { recursive: true });
+        }
+    }
     data.mcpServers[serverName] = entry;
     await fsp.writeFile(absConfigPath, JSON.stringify(data, null, 2), 'utf8');
     const hadPrev = !!(prev && typeof prev === 'object');
@@ -117,7 +126,12 @@ export async function ensureConsensusMcporterFile(absConfigPath, serverName, mcp
     logger.info(
         `[Consensus OAuth] ensureConsensusMcporterFile wrote mcpServers.${serverName}.url=${mcpUrl} -> ${absConfigPath}` +
             ` hadPreviousEntry=${hadPrev} preservedOAuthLikeFields=${hadTokens}` +
-            (trimmedRedirect ? ` oauthRedirectUrl=${trimmedRedirect} (fixed callback; Docker 需映射同端口到容器)` : '')
+            (trimmedRedirect ? ` oauthRedirectUrl=${trimmedRedirect} (fixed callback; Docker 需映射同端口到容器)` : '') +
+            (tokenCacheDirAbs !== undefined && tokenCacheDirAbs !== null
+                ? ` tokenCacheDir=${tokenCacheDirAbs}`
+                : tokenCacheDirAbs === null
+                  ? ' tokenCacheDir=(cleared)'
+                  : '')
     );
 }
 
@@ -527,11 +541,21 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
         );
     }
 
-    await ensureConsensusMcporterFile(absConfig, serverName, mcpUrl, oauthRedirectUrl);
-    /** 无 --config 时 mcporter 按名称解析服务器，需 ~/.mcporter/mcporter.json 含 mcpServers.<serverName>（含 url/oauthRedirectUrl） */
+    const mergedForTokenCache = { ...(currentConfig && typeof currentConfig === 'object' ? currentConfig : {}), ...options };
+    const tokenCacheDirAbs = resolveConsensusTokenCacheDir(absConfig, mergedForTokenCache);
+    if (tokenCacheDirAbs) {
+        logger.info(
+            `[Consensus OAuth] tokenCacheDir=${tokenCacheDirAbs} (mcporter 会将同套 token 写入该目录 tokens.json，并与 ~/.mcporter/credentials.json vault 组合使用)`
+        );
+    } else {
+        logger.info('[Consensus OAuth] tokenCacheDir disabled (CONSENSUS_MCPORTER_TOKEN_CACHE_DISABLE)，仅使用 vault');
+    }
+
+    await ensureConsensusMcporterFile(absConfig, serverName, mcpUrl, oauthRedirectUrl, tokenCacheDirAbs);
+    /** 无 --config 时 mcporter 按名称解析服务器，需 ~/.mcporter/mcporter.json 含 mcpServers.<serverName>（含 url/oauthRedirectUrl/tokenCacheDir） */
     if (!authUseConfig) {
         const homeMcporterJson = path.join(os.homedir(), '.mcporter', 'mcporter.json');
-        await ensureConsensusMcporterFile(homeMcporterJson, serverName, mcpUrl, oauthRedirectUrl);
+        await ensureConsensusMcporterFile(homeMcporterJson, serverName, mcpUrl, oauthRedirectUrl, tokenCacheDirAbs);
         logger.info(`[Consensus OAuth] mirrored server entry to mcporter home config for auth: ${homeMcporterJson}`);
     }
 
