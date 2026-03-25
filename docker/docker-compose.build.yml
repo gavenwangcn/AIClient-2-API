@@ -23,7 +23,7 @@ services:
       - ARGS=
       # 与 Dockerfile 一致，使 mcporter 将 ~/.mcporter 落在 /app/.mcporter 并随卷持久化
       - HOME=/app
-      # 设置后默认启用 mcporter --config，以便 oauthRedirectUrl 固定端口（勿再设 AUTH_USE_CONFIG=0，否则 redirect_uri 仍随机）
+      # 固定 OAuth 回调 URL；生成授权默认不传 --config，服务会在启动 mcporter 前把该 URL 写入 /app/.mcporter/mcporter.json（与 mcporter-data 卷一致）
       - CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL=http://127.0.0.1:19876/callback
       - TRACE_LOG_DB_PATH=/app/logs/aiclient2api-trace.db
       - TRACE_LOG_MAX_DAYS=30
