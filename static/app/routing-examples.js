@@ -556,12 +556,13 @@ function renderRoutingExamples(providerConfigs) {
                 <div class="protocol-content" data-protocol="mcp">
                     <p class="routing-mcp-proxy-note" style="font-size:0.875rem;color:var(--text-secondary, #6b7280);margin:0 0 14px;line-height:1.5;">${t('dashboard.routing.mcpProxyNote')}</p>
                     <h5 style="margin:12px 0 8px;font-size:0.95rem;font-weight:600;">${t('dashboard.routing.mcpSectionCurl')}</h5>
+                    <p style="font-size:0.8rem;color:var(--text-secondary, #6b7280);margin:0 0 10px;">${t('dashboard.routing.mcpCurlRemoteHint')}</p>
                     <div class="endpoint-info">
                         <label data-i18n="dashboard.routing.endpoint">${t('dashboard.routing.endpoint')}</label>
                         <code class="endpoint-path">${routeInfo.paths.mcpTools}</code>
                     </div>
                     <div class="usage-example">
-                        <label>GET — 列出工具（底层 mcporter list consensus --schema）</label>
+                        <label>GET — ${t('dashboard.routing.mcpMcporterListLabel')}（服务侧等价 mcporter list）</label>
                         <pre><code>curl ${hostname}${routeInfo.paths.mcpTools} \\
   -H "Authorization: Bearer YOUR_API_KEY"</code></pre>
                     </div>
@@ -570,7 +571,7 @@ function renderRoutingExamples(providerConfigs) {
                         <code class="endpoint-path">${routeInfo.paths.mcp}</code>
                     </div>
                     <div class="usage-example">
-                        <label>POST — 调用工具（底层 mcporter call）</label>
+                        <label>POST — ${t('dashboard.routing.mcpMcporterCallLabel')}（服务侧等价 mcporter call）</label>
                         <pre><code>curl ${hostname}${routeInfo.paths.mcp} \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
@@ -581,25 +582,38 @@ function renderRoutingExamples(providerConfigs) {
                         <code class="endpoint-path">${routeInfo.paths.mcpJsonRpc}</code>
                     </div>
                     <div class="usage-example">
-                        <label>POST — JSON-RPC tools/list（节选）</label>
+                        <label>POST — JSON-RPC tools/list</label>
                         <pre><code>curl ${hostname}${routeInfo.paths.mcpJsonRpc} \\
   -H "Content-Type: application/json" \\
   -H "Authorization: Bearer YOUR_API_KEY" \\
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'</code></pre>
                     </div>
-                    <h5 style="margin:18px 0 8px;font-size:0.95rem;font-weight:600;">${t('dashboard.routing.mcpSectionDocker')}</h5>
-                    <p style="font-size:0.8rem;color:var(--text-secondary, #6b7280);margin:0 0 10px;">${t('dashboard.routing.mcpDockerHint')}</p>
+                    <h5 style="margin:18px 0 8px;font-size:0.95rem;font-weight:600;">${t('dashboard.routing.mcpSectionRemoteMcporter')}</h5>
+                    <p style="font-size:0.875rem;color:var(--text-secondary, #6b7280);margin:0 0 8px;line-height:1.5;">${t('dashboard.routing.mcpRemoteIntro')}</p>
+                    <p style="font-size:0.8rem;color:var(--text-secondary, #6b7280);margin:0 0 12px;">${t('dashboard.routing.mcpRemoteUrlHint')}</p>
                     <div class="usage-example">
-                        <label>list — 与 OAuth 成功后自检一致</label>
-                        <pre><code>docker exec -e HOME=/app aiclient2api /usr/bin/mcporter \\
-  --config /app/configs/consensus/mcporter.json --log-level error \\
-  list consensus --schema --json</code></pre>
+                        <label>${t('dashboard.routing.mcpJsonExampleLabel')}</label>
+                        <pre><code>{
+  "mcpServers": {
+    "consensusViaProxy": {
+      "url": "${hostname}${routeInfo.paths.mcpJsonRpc}",
+      "auth": "none",
+      "headers": {
+        "Authorization": "Bearer YOUR_API_KEY"
+      }
+    }
+  }
+}</code></pre>
                     </div>
                     <div class="usage-example">
-                        <label>call — 检索示例</label>
-                        <pre><code>docker exec -e HOME=/app aiclient2api /usr/bin/mcporter \\
-  --config /app/configs/consensus/mcporter.json --log-level error \\
-  call consensus.search query="diabetes treatment review" --output json</code></pre>
+                        <label>${t('dashboard.routing.mcpMcporterListLabel')}</label>
+                        <pre><code>mcporter --config ./mcporter-via-aiclient.json --log-level error \\
+  list consensusViaProxy --schema --json</code></pre>
+                    </div>
+                    <div class="usage-example">
+                        <label>${t('dashboard.routing.mcpMcporterCallLabel')}</label>
+                        <pre><code>mcporter --config ./mcporter-via-aiclient.json --log-level error \\
+  call consensusViaProxy.search query="machine learning review" --output json</code></pre>
                     </div>
                 </div>`;
         } else {
