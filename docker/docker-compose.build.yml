@@ -23,8 +23,10 @@ services:
       - ARGS=
       # 与 Dockerfile 一致，使 mcporter 将 ~/.mcporter 落在 /app/.mcporter 并随卷持久化
       - HOME=/app
-      # 固定 OAuth 回调 URL；生成授权默认不传 --config，服务会在启动 mcporter 前把该 URL 写入 /app/.mcporter/mcporter.json（与 mcporter-data 卷一致）
+      # 固定 OAuth 回调 URL；API 启动后长期监听该端口（共享 Hub）；生成授权时仅注册处理函数，不关闭监听
       - CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL=http://localhost:19876/callback
+      # 可选：等待浏览器回调的最长时间（毫秒），默认 120000；回调未到会先报 OAuthTimeoutError
+      # - CONSENSUS_MCPORTER_OAUTH_TIMEOUT_MS=300000
       - TRACE_LOG_DB_PATH=/app/logs/aiclient2api-trace.db
       - TRACE_LOG_MAX_DAYS=30
     healthcheck:

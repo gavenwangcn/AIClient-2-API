@@ -2889,15 +2889,16 @@ function showAuthModal(authUrl, authInfo) {
             window.removeEventListener('message', handlePopupMessage);
         };
 
-        // 监听 OAuth 成功事件，自动关闭窗口和模态框
-        const handleOAuthSuccess = () => {
+        // 监听 OAuth 成功事件，自动关闭窗口和模态框（Consensus：须先 cancel-auth 关闭回调 HTTP，与点「取消」一致）
+        const handleOAuthSuccess = async () => {
             if (authWindow && !authWindow.closed) {
                 authWindow.close();
             }
+            await cancelConsensusMcporterIfNeeded();
             cleanupAuthModalKeyboard();
             modal.remove();
             cleanupAuthListeners();
-            
+
             // 授权成功后刷新配置和提供商列表
             loadProviders();
             loadConfigList();

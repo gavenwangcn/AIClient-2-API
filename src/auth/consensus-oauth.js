@@ -482,7 +482,13 @@ export async function handleConsensusOAuth(currentConfig, options = {}) {
 
     const mcpUrl = options.consensusMcpUrl || DEFAULT_MCP_URL;
     const serverName = options.consensusServerName || DEFAULT_SERVER_NAME;
-    const oauthTimeoutMs = Number(options.oauthTimeout ?? options.consensusOAuthTimeout ?? 120000) || 120000;
+    const oauthTimeoutMs =
+        Number(
+            options.oauthTimeout ??
+                options.consensusOAuthTimeout ??
+                process.env.CONSENSUS_MCPORTER_OAUTH_TIMEOUT_MS ??
+                120000
+        ) || 120000;
     const urlCaptureTimeoutMs = Math.min(URL_CAPTURE_TIMEOUT_MS, oauthTimeoutMs);
 
     const oauthRedirectUrl = (

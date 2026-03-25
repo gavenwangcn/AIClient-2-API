@@ -39,6 +39,7 @@ export function buildConsensusServerDefinition(serverName, mcpUrl, oauthRedirect
 
 /**
  * 取消进行中的原生 OAuth：关闭回调 HTTP（释放监听端口）、关闭 transport，使 waitForAuthorizationCode 失败。
+ * 注意：正常 OAuth 流程结束（成功/超时）时不再自动关闭回调 HTTP，须由本函数或前端 cancel-auth 显式关闭。
  * @param {{ info?: (m: string) => void }} [log]
  */
 /** 是否存在本会话尚未结束的 OAuth 回调监听（与 mcporter 并跑时仍可能占用同端口，生成授权前会先关闭） */
@@ -46,7 +47,12 @@ export function hasActiveConsensusOAuthSession() {
     return activeNativeHandle !== null;
 }
 
-export async function cancelConsensusNativeOAuthSession(log) {
+/**
+ * @param {{ info?: (m: string) => void, warn?: (m: string) => void }} [log]
+ * @param {{ restartPlaceholder?: boolean }} [options] - restartPlaceholder 已废弃（Hub 常驻，无需重启）
+ */
+export async function cancelConsensusNativeOAuthSession(log, options = {}) {
+    void options;
     if (pendingAuthUrlReject) {
         try {
             pendingAuthUrlReject(new Error('OAuth cancelled'));
@@ -64,7 +70,7 @@ export async function cancelConsensusNativeOAuthSession(log) {
     if (h?.transport) {
         await h.transport.close().catch(() => {});
     }
-    log?.info?.('[Consensus Native OAuth] cancel: callback HTTP server closed and transport closed');
+    log?.info?.('[Consensus Native OAuth] cancel: OAuth handler cleared (shared callback hub keeps listening)');
 }
 
 /**
@@ -92,7 +98,7 @@ export async function startConsensusNativeOAuth(opts) {
     } = opts;
 
     const hadExistingListener = activeNativeHandle !== null;
-    await cancelConsensusNativeOAuthSession(appLogger);
+    await cancelConsensusNativeOAuthSession(appLogger, { restartPlaceholder: false });
     if (hadExistingListener) {
         appLogger.info(
             '[Consensus Native OAuth] 生成授权：已关闭本会话上一轮的回调 HTTP，避免重复占用端口后再启动新监听'
@@ -122,8 +128,18 @@ export async function startConsensusNativeOAuth(opts) {
     });
 
     let authUrlEmitted = false;
+    let useConsensusHub = false;
+    if (oauthRedirectUrl) {
+        try {
+            const u = new URL(oauthRedirectUrl);
+            useConsensusHub = !!(u.port && u.port !== '0');
+        } catch {
+            useConsensusHub = false;
+        }
+    }
     const session = await createOAuthSession(definition, oauthLogger, {
         skipOpenBrowser: true,
+        useConsensusHub,
         onAuthorizationUrl: (url) => {
             if (authUrlEmitted) {
                 return;
@@ -174,11 +190,14 @@ export async function startConsensusNativeOAuth(opts) {
             return { ok: true };
         } finally {
             await transport.close().catch(() => {});
-            await session.close().catch(() => {});
+            // 不调用 session.close()：回调 HTTP 保持监听，直至用户在前端点「取消」触发 cancel-auth，
+            // 或授权成功关闭弹框时前端在 oauth_success 路径调用 cancel-auth。
             if (activeNativeHandle?.session === session) {
-                activeNativeHandle = null;
+                activeNativeHandle = { session, transport: null };
             }
-            appLogger.info('[Consensus Native OAuth] flow finally: transport and callback server closed');
+            appLogger.info(
+                '[Consensus Native OAuth] flow finally: transport closed; callback HTTP 仍监听直至 cancel-auth（用户取消或授权成功关弹框）'
+            );
         }
     })();
 

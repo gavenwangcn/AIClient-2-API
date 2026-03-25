@@ -118,6 +118,10 @@ import '../converters/register-converters.js'; // 注册所有转换器
 import { getProviderPoolManager } from './service-manager.js';
 import { isRetryableNetworkError } from '../utils/common.js';
 import { initApiTraceLogger } from '../utils/api-trace-logger.js';
+import {
+    startConsensusOAuthCallbackPlaceholderIfConfigured,
+    shutdownConsensusOAuthCallbackHub,
+} from '../auth/consensus-oauth-callback-placeholder.js';
 
 // 检测是否作为子进程运行
 const IS_WORKER_PROCESS = process.env.IS_WORKER_PROCESS === 'true';
@@ -184,6 +188,12 @@ async function gracefulShutdown() {
     try {
         await getTLSSidecar().stop();
     } catch { /* ignore */ }
+
+    try {
+        await shutdownConsensusOAuthCallbackHub(logger);
+    } catch {
+        /* ignore */
+    }
 
     if (serverInstance) {
         serverInstance.close(() => {
@@ -283,7 +293,9 @@ async function startServer() {
 
     // Initialize API services
     const services = await initApiService(CONFIG, true);
-    
+
+    await startConsensusOAuthCallbackPlaceholderIfConfigured(logger);
+
     // Initialize UI management features
     initializeUIManagement(CONFIG);
     
