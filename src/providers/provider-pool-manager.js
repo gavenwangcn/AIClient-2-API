@@ -1281,6 +1281,20 @@ export class ProviderPoolManager {
 
         const provider = this._findProvider(providerType, providerConfig.uuid);
         if (provider) {
+            // 防并发机制 A: 如果已经在刷新中，忽略请求
+            if (this.refreshingUuids.has(provider.uuid)) {
+                this._log('debug', `Provider ${providerConfig.uuid} is already in refresh queue, ignoring duplicate request.`);
+                return;
+            }
+
+            // 防并发机制 B: 如果 30 秒内刚刷新过，忽略请求（防止滞后的 401 错误导致重复刷新）
+            const now = Date.now();
+            const lastRefreshTime = provider.config.lastRefreshTime || 0;
+            if (now - lastRefreshTime < 30000) {
+                this._log('info', `Provider ${providerConfig.uuid} was refreshed recently (${Math.round((now - lastRefreshTime)/1000)}s ago), ignoring refresh request.`);
+                return;
+            }
+
             provider.config.needsRefresh = true;
             this._log('info', `Marked provider ${providerConfig.uuid} as needsRefresh. Enqueuing...`);
             
@@ -1443,6 +1457,7 @@ export class ProviderPoolManager {
             provider.config.errorCount = 0;
             provider.config.refreshCount = 0;
             provider.config.needsRefresh = false;
+            provider.config.lastRefreshTime = Date.now(); // 标记为健康时也视为刚刷新完成
             provider.config.lastErrorTime = null;
             provider.config.lastErrorMessage = null;
             provider.config._lastSelectionSeq = 0;
@@ -1488,6 +1503,7 @@ export class ProviderPoolManager {
         if (provider) {
             provider.config.needsRefresh = false;
             provider.config.refreshCount = 0;
+            provider.config.lastRefreshTime = Date.now(); // 显式重置时也更新刷新时间
             // 更新为可用
             provider.config.lastHealthCheckTime = new Date().toISOString();
             // 标记为健康，以便立即投入使用
