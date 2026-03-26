@@ -375,7 +375,9 @@ export class ProviderPoolManager {
                 force ? await serviceAdapter.forceRefreshToken() : await serviceAdapter.refreshToken();
                 const duration = Date.now() - startTime;
                 this._log('info', `Token refresh successful for node ${providerStatus.uuid} (Duration: ${duration}ms)`);
+                config.needsRefresh = false;
                 config.refreshCount = 0;
+                config.lastRefreshTime = Date.now();
                 this._debouncedSave(providerType);
             } else {
                 throw new Error(`refreshToken method not implemented for ${providerType}`);
