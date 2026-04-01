@@ -172,38 +172,144 @@ function buildUpstreamMessagesRaw(body) {
     }
 }
 
+/** 链路预览：长文本截断，避免单条消息撑爆 UI */
+const TRACE_PREVIEW_MAX = 200;
+
+function tracePreviewSnippet(s, maxLen = TRACE_PREVIEW_MAX) {
+    if (s == null || typeof s !== 'string') return '';
+    const t = s.trim();
+    if (!t) return '';
+    return t.length <= maxLen ? t : `${t.slice(0, maxLen)}…`;
+}
+
+function traceApproxSize(v) {
+    if (v == null) return 0;
+    if (typeof v === 'string') return v.length;
+    try {
+        return JSON.stringify(v).length;
+    } catch {
+        return 0;
+    }
+}
+
+/**
+ * 从消息 content 抽取用于链路日志的「可读预览」（非完整 JSON）。
+ * 对 tool_result / 多模态等原先会变成空串的块给出占位说明。
+ */
 function extractTextParts(value) {
     if (typeof value === 'string') return value;
     if (!value) return '';
     if (Array.isArray(value)) {
-        return value.map((item) => extractTextParts(item)).filter(Boolean).join('\n');
+        const parts = value.map((item) => extractTextParts(item)).filter((x) => x !== '');
+        return parts.join('\n');
     }
     if (typeof value === 'object') {
         const record = value;
+        const typ = record.type;
+
+        if (typ === 'tool_result') {
+            const id = record.tool_use_id || record.tool_call_id || '?';
+            let body = '';
+            if (typeof record.content === 'string') {
+                body = tracePreviewSnippet(record.content);
+            } else if (record.content !== undefined) {
+                body = extractTextParts(record.content);
+            }
+            const n = traceApproxSize(record.content);
+            if (body) return `[tool_result id=${id}] ${body}`;
+            return `[tool_result id=${id} · 无可抽取文本 · 约 ${n} chars]`;
+        }
+        if (typ === 'tool_use') {
+            const nm = record.name || '?';
+            const id = record.id ? ` · ${record.id}` : '';
+            return `[tool_use: ${nm}${id}]`;
+        }
+        if (typ === 'function_call_output') {
+            const cid = record.call_id || '?';
+            const out = typeof record.output === 'string' ? record.output : extractTextParts(record.output);
+            if (out) return `[function_call_output call_id=${cid}] ${tracePreviewSnippet(out)}`;
+            return `[function_call_output call_id=${cid} · 约 ${traceApproxSize(record.output)} chars]`;
+        }
+        if (typ === 'function_call') {
+            const nm = record.name || record.function?.name || '?';
+            return `[function_call: ${nm}]`;
+        }
+        if (typ === 'image' || typ === 'input_image' || typ === 'image_url') {
+            return '[image]';
+        }
+        if (typ === 'input_audio' || typ === 'audio') {
+            return '[audio]';
+        }
+        if (typ === 'file' || record.file) {
+            return '[file]';
+        }
+
         if (typeof record.text === 'string') return record.text;
         if (typeof record.output === 'string') return record.output;
         if (typeof record.content === 'string') return record.content;
-        if (record.content !== undefined) return extractTextParts(record.content);
-        if (record.input !== undefined) return extractTextParts(record.input);
+        if (record.content !== undefined) {
+            const inner = extractTextParts(record.content);
+            if (inner) return inner;
+        }
+        if (record.input !== undefined) {
+            const inner = extractTextParts(record.input);
+            if (inner) return inner;
+        }
+        if (typ && typ !== 'text') {
+            const approx = traceApproxSize(record);
+            return `[${typ} · 约 ${approx} chars]`;
+        }
     }
     return '';
 }
 
 function extractGeminiParts(parts) {
     if (!Array.isArray(parts)) return '';
-    return parts.map((p) => {
-        if (p.text) return p.text;
-        if (p.functionCall) return JSON.stringify(p.functionCall);
-        return '';
-    }).filter(Boolean).join('\n');
+    return parts
+        .map((p) => {
+            if (!p || typeof p !== 'object') return '';
+            if (p.text) return p.text;
+            if (p.functionCall) {
+                const nm = p.functionCall.name || '?';
+                return `[functionCall: ${nm}]`;
+            }
+            if (p.functionResponse) {
+                const nm = p.functionResponse.name || '?';
+                return `[functionResponse: ${nm} · 约 ${traceApproxSize(p.functionResponse.response)} chars]`;
+            }
+            if (p.inlineData) return '[inlineData]';
+            if (p.fileData) return '[fileData]';
+            if (p.executableCode) return '[executableCode]';
+            if (p.codeExecutionResult) return '[codeExecutionResult]';
+            return '';
+        })
+        .filter(Boolean)
+        .join('\n');
 }
 
-/** Responses / Codex：从 input 条目中抽取文本（与 ProviderStrategy 逻辑对齐） */
+/** Responses / Codex：从 input 条目中抽取文本（与 ProviderStrategy 逻辑对齐，含工具块占位） */
 function textFromResponsesInputItem(item) {
     if (!item || typeof item !== 'object') return '';
+    if (item.type === 'function_call_output') {
+        const cid = item.call_id || '?';
+        const out = typeof item.output === 'string' ? item.output : extractTextParts(item.output);
+        if (out) return `[function_call_output call_id=${cid}] ${tracePreviewSnippet(out)}`;
+        return `[function_call_output call_id=${cid} · 约 ${traceApproxSize(item.output)} chars]`;
+    }
+    if (item.type === 'function_call') {
+        const nm = item.name || '?';
+        return `[function_call: ${nm}]`;
+    }
     if (typeof item.content === 'string') return item.content;
     if (Array.isArray(item.content)) {
-        return item.content.map((c) => c.text || c.output_text || '').filter(Boolean).join('\n');
+        return item.content
+            .map((c) => {
+                if (!c || typeof c !== 'object') return '';
+                if (c.type === 'input_text' || c.type === 'output_text') return c.text || c.output_text || '';
+                return extractTextParts(c);
+            })
+            .filter(Boolean)
+            .join('\n');
     }
     if (typeof item.text === 'string') return item.text;
     return '';
@@ -608,13 +714,11 @@ export class RequestLogger {
                     fullContent = m.content.length > MAX_MSG ? `${m.content.substring(0, MAX_MSG)}\n... [截断]` : m.content;
                     contentLength = m.content.length;
                 } else if (Array.isArray(m.content)) {
-                    const textParts = m.content.filter((c) => c.type === 'text');
                     const imageParts = m.content.filter((c) => c.type === 'image' || c.type === 'image_url' || c.type === 'input_image');
                     hasImages = imageParts.length > 0;
-                    const text = textParts.map((c) => c.text || '').join('\n');
+                    const text = extractTextParts(m.content);
                     fullContent = text.length > MAX_MSG ? `${text.substring(0, MAX_MSG)}\n... [截断]` : text;
-                    contentLength = text.length;
-                    if (hasImages) fullContent += `\n[+${imageParts.length} images]`;
+                    contentLength = fullContent.length;
                 } else if (m.content && typeof m.content === 'object') {
                     const text = extractTextParts(m.content);
                     fullContent = text.length > MAX_MSG ? `${text.substring(0, MAX_MSG)}\n... [截断]` : text;

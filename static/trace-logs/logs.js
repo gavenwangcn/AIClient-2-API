@@ -316,7 +316,7 @@ function renderPromptsTab(tc){
   // ===== 转换后代理请求 =====
   if(curPayload.cursorMessages&&curPayload.cursorMessages.length){
     h+='<div class="content-section" style="margin-top:24px;border-top:2px solid var(--green);padding-top:16px"><div class="cs-title">📤 代理 最终消息（转换后） <span class="cnt" style="background:var(--green);color:#fff">'+curPayload.cursorMessages.length+' 条</span></div>';
-    h+='<div style="color:var(--t2);font-size:12px;margin-bottom:8px">⬇️ 以下为经代理转换后实际发往上游的消息（已清除身份声明、注入工具指令、添加认知重构）</div>';
+    h+='<div style="color:var(--t2);font-size:12px;margin-bottom:8px">⬇️ 以下为经代理转换后实际发往上游的消息（已清除身份声明、注入工具指令、添加认知重构）。含 <code>[tool_result]</code> / <code>[tool_use]</code> / <code>[image]</code> 等为预览占位，完整结构见「请求参数」中的原始 JSON。</div>';
     curPayload.cursorMessages.forEach((m,i)=>{
       const collapsed=m.contentPreview.length>500;
       h+='<div class="msg-item" style="border-left:3px solid var(--green)"><div class="msg-header" onclick="togMsg(this)"><span class="msg-role '+m.role+'">'+m.role+' #'+(i+1)+'</span><span class="msg-meta">'+fmtN(m.contentLength)+' chars '+(collapsed?'▶ 展开':'▼ 收起')+'</span></div><div class="msg-body" style="display:'+(collapsed?'none':'block')+';max-height:800px;overflow-y:auto">'+escH(m.contentPreview)+'</div></div>';
