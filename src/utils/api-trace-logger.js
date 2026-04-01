@@ -134,6 +134,24 @@ function sanitizeForStorage(obj) {
 /** 链路日志：发往上游的「消息」侧 JSON，不做 extractText 等解析，便于排查 */
 const MAX_UPSTREAM_MESSAGES_RAW_CHARS = 1_500_000;
 
+/** MCP 代理：客户端请求/HTTP 响应体写入 SQLite 的上限（与上游消息截断同量级） */
+export const MAX_MCP_TRACE_BODY_CHARS = 1_500_000;
+
+/** 实时日志条目中 MCP 响应预览长度（完整内容在「响应内容」页） */
+const MAX_MCP_LOG_PREVIEW_CHARS = 6_000;
+
+export function truncateMcpTraceText(s, maxLen = MAX_MCP_TRACE_BODY_CHARS) {
+    if (typeof s !== 'string') return '';
+    if (s.length <= maxLen) return s;
+    return `${s.slice(0, maxLen)}\n\n... [已截断，总长度约 ${s.length} chars]`;
+}
+
+export function mcpResponsePreviewForLog(s, maxLen = MAX_MCP_LOG_PREVIEW_CHARS) {
+    if (typeof s !== 'string' || !s.length) return '';
+    if (s.length <= maxLen) return s;
+    return `${s.slice(0, maxLen)}\n... [截断，共 ${s.length} chars，完整见「响应内容」]`;
+}
+
 function buildUpstreamMessagesRaw(body) {
     if (!body || typeof body !== 'object') return '';
     const slice = {};
@@ -862,7 +880,7 @@ export class RequestLogger {
     }
 
     /**
-     * Consensus MCP 等：仅记录方法/工具名/路由，不记录 tools/call 的 arguments（避免敏感查询或凭据）。
+     * Consensus MCP：路由摘要（方法 / 工具名 / HTTP 状态）。完整 JSON-RPC 请求体见 {@link RequestLogger#recordMcpClientRequestRaw}，响应见 {@link RequestLogger#recordMcpResponseRaw}。
      * @param {{ jsonrpcMethod?: string, toolName?: string, selector?: string, jsonrpcId?: *, httpStatus?: number, rpcError?: string }} meta
      */
     recordMcpMeta(meta) {
@@ -896,6 +914,57 @@ export class RequestLogger {
             if (merged[k] === undefined) delete merged[k];
         });
         this._payload.mcp = merged;
+    }
+
+    /**
+     * MCP：入站 HTTP 元数据（不记录 Authorization 具体值，仅是否携带 Bearer 与 token 长度）
+     * @param {object} meta
+     */
+    recordMcpHttpClient(meta) {
+        if (this._summary.traceKind !== 'mcp') return;
+        this._payload.mcpHttp = { ...(this._payload.mcpHttp || {}), ...(meta || {}) };
+    }
+
+    /**
+     * MCP：客户端收到的完整请求体（JSON-RPC 或 REST），经 sanitize 后落库
+     * @param {object|string|null} body
+     */
+    recordMcpClientRequestRaw(body) {
+        if (this._summary.traceKind !== 'mcp') return;
+        if (body === undefined || body === null) return;
+        try {
+            const sanitized = typeof body === 'object' && body !== null
+                ? sanitizeForStorage(body)
+                : body;
+            let s = typeof sanitized === 'string'
+                ? sanitized
+                : JSON.stringify(sanitized, null, 2);
+            this._payload.mcpClientRequestRaw = truncateMcpTraceText(s);
+            this.updateSummary({ mcpClientRequestChars: this._payload.mcpClientRequestRaw.length });
+        } catch {
+            this._payload.mcpClientRequestRaw = truncateMcpTraceText(String(body));
+        }
+    }
+
+    /**
+     * MCP：返回给客户端的完整 HTTP 响应 JSON 字符串
+     * @param {object|string|null} out — JSON-RPC/REST 结果对象或已序列化字符串
+     */
+    recordMcpResponseRaw(out) {
+        if (this._summary.traceKind !== 'mcp') return;
+        if (out === undefined || out === null) {
+            this._payload.mcpHttpResponseRaw = '';
+            this.updateSummary({ mcpResponseBodyChars: 0 });
+            return;
+        }
+        try {
+            let s = typeof out === 'string' ? out : JSON.stringify(sanitizeForStorage(out), null, 2);
+            this._payload.mcpHttpResponseRaw = truncateMcpTraceText(s);
+            this.updateSummary({ mcpResponseBodyChars: this._payload.mcpHttpResponseRaw.length });
+        } catch {
+            this._payload.mcpHttpResponseRaw = truncateMcpTraceText(String(out));
+            this.updateSummary({ mcpResponseBodyChars: this._payload.mcpHttpResponseRaw.length });
+        }
     }
 
     complete(responseChars, stopReason) {

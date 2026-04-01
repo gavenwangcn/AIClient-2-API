@@ -3,7 +3,25 @@ import { MODEL_PROVIDER } from '../../utils/common.js';
 import logger from '../../utils/logger.js';
 import { getApiService } from '../../services/service-manager.js';
 import { normalizeToolsListResult, runMcporterListJson } from './consensus-mcporter-list-cli.js';
-import { createApiTraceLogger } from '../../utils/api-trace-logger.js';
+import { createApiTraceLogger, mcpResponsePreviewForLog } from '../../utils/api-trace-logger.js';
+
+/** 全链路日志：入站 HTTP 是否携带 API Key（Bearer），不落库密钥本身 */
+function mcpInboundHttpMeta(req) {
+    const h = req.headers || {};
+    const raw = h.authorization ?? h.Authorization;
+    const auth = typeof raw === 'string' ? raw.trim() : '';
+    const bearer = /^Bearer\s+(\S+)/i.exec(auth);
+    return {
+        inboundMethod: req.method || null,
+        contentType: h['content-type'] ?? h['Content-Type'] ?? null,
+        hasAuthorizationHeader: auth.length > 0,
+        authorizationScheme: bearer ? 'Bearer' : (auth ? 'non-bearer' : 'none'),
+        /** 客户端是否在 Authorization 中发送了 Bearer token（与本服务 API Key 一致时使用） */
+        bearerTokenSent: Boolean(bearer),
+        /** Bearer 段长度（不含 "Bearer " 前缀），便于确认是否非空 */
+        bearerTokenLength: bearer ? bearer[1].length : null,
+    };
+}
 
 function createConsensusMcpTrace(method, pathName) {
     return createApiTraceLogger({
@@ -145,7 +163,9 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
         if (method === 'POST' && (pathName === '/v1/mcp' || pathName === '/mcp')) {
             trace = createConsensusMcpTrace(method, pathName);
             trace.startPhase('receive', 'MCP JSON-RPC');
+            trace.recordMcpHttpClient(mcpInboundHttpMeta(req));
             const body = await getRequestBody(req);
+            trace.recordMcpClientRequestRaw(body);
             if (body && body.jsonrpc === '2.0') {
                 const rpcMethod = body.method || 'unknown';
                 let toolName;
@@ -167,12 +187,18 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
                         jsonrpcId: body.id,
                         httpStatus: 204,
                     });
+                    trace.recordMcpResponseRaw('');
+                    trace.info('MCP', 'respond', 'HTTP 204（无响应体）', { note: 'JSON-RPC 通知' });
                     res.writeHead(204);
                     res.end();
                     trace.complete(0, 'stop');
                     return true;
                 }
                 const bodyStr = JSON.stringify(out);
+                trace.recordMcpResponseRaw(out);
+                trace.info('MCP', 'respond', `HTTP 200 JSON-RPC 响应 ${bodyStr.length} chars`, {
+                    responsePreview: mcpResponsePreviewForLog(bodyStr),
+                });
                 setMcpResponseHeaders(res);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(bodyStr);
@@ -192,6 +218,10 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
                 return true;
             }
             trace.recordMcpMeta({ jsonrpcMethod: 'invalid-body' });
+            trace.recordMcpResponseRaw({ error: { message: 'Expected MCP JSON-RPC 2.0 body with jsonrpc, method' } });
+            trace.info('MCP', 'respond', 'HTTP 400 非法 JSON-RPC 体', {
+                responsePreview: mcpResponsePreviewForLog(JSON.stringify({ error: { message: 'Expected MCP JSON-RPC 2.0 body with jsonrpc, method' } })),
+            });
             trace.endPhase();
             trace.fail('Expected MCP JSON-RPC 2.0 body with jsonrpc, method');
             res.writeHead(400, { 'Content-Type': 'application/json' });
@@ -204,6 +234,8 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
         if (method === 'GET' && pathName === '/v1/mcp/tools') {
             trace = createConsensusMcpTrace(method, pathName);
             trace.startPhase('receive', 'GET /v1/mcp/tools');
+            trace.recordMcpHttpClient(mcpInboundHttpMeta(req));
+            trace.recordMcpClientRequestRaw({ note: 'No JSON body', route: 'GET /v1/mcp/tools', path: pathName });
             trace.recordMcpMeta({ jsonrpcMethod: 'GET /v1/mcp/tools' });
             trace.endPhase();
             trace.startPhase('upstream', 'mcporter list --schema');
@@ -213,9 +245,12 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
             const serverName = cfg.CONSENSUS_MCP_SERVER_NAME || 'consensus';
             if (!configPath) {
                 trace.endPhase();
+                const errBody = { error: { message: 'CONSENSUS_MCPORTER_CONFIG_PATH missing' } };
+                trace.recordMcpResponseRaw(errBody);
+                trace.info('MCP', 'respond', 'HTTP 400', { responsePreview: mcpResponsePreviewForLog(JSON.stringify(errBody)) });
                 trace.fail('CONSENSUS_MCPORTER_CONFIG_PATH missing');
                 res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: { message: 'CONSENSUS_MCPORTER_CONFIG_PATH missing' } }));
+                res.end(JSON.stringify(errBody));
                 return true;
             }
             const data = await runMcporterListJson(configPath, {
@@ -225,6 +260,10 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
             trace.endPhase();
             trace.startPhase('respond', 'HTTP');
             const bodyStr = JSON.stringify(data);
+            trace.recordMcpResponseRaw(data);
+            trace.info('MCP', 'respond', `HTTP 200 tools list ${bodyStr.length} chars`, {
+                responsePreview: mcpResponsePreviewForLog(bodyStr),
+            });
             setMcpResponseHeaders(res);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(bodyStr);
@@ -236,16 +275,23 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
         if (method === 'POST' && pathName === '/v1/mcp/call') {
             trace = createConsensusMcpTrace(method, pathName);
             trace.startPhase('receive', 'POST /v1/mcp/call');
+            trace.recordMcpHttpClient(mcpInboundHttpMeta(req));
             const body = await getRequestBody(req);
+            trace.recordMcpClientRequestRaw(body);
             const selector = body.selector || body.tool;
             if (!selector) {
                 trace.recordMcpMeta({ jsonrpcMethod: 'POST /v1/mcp/call', rpcError: 'missing selector' });
+                const errBody = {
+                    error: { message: 'Missing "selector" (e.g. consensus.search) or "tool"' },
+                };
+                trace.recordMcpResponseRaw(errBody);
+                trace.info('MCP', 'respond', 'HTTP 400 missing selector', {
+                    responsePreview: mcpResponsePreviewForLog(JSON.stringify(errBody)),
+                });
                 trace.endPhase();
                 trace.fail('Missing selector or tool');
                 res.writeHead(400, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({
-                    error: { message: 'Missing "selector" (e.g. consensus.search) or "tool"' },
-                }));
+                res.end(JSON.stringify(errBody));
                 return true;
             }
             const args = body.args || body.arguments || {};
@@ -255,9 +301,12 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
             const service = await getApiService(currentConfig, null, { skipUsageCount: true });
             if (!service.callMcpTool) {
                 trace.endPhase();
+                const errBody = { error: { message: 'Consensus adapter missing callMcpTool' } };
+                trace.recordMcpResponseRaw(errBody);
+                trace.info('MCP', 'respond', 'HTTP 500', { responsePreview: mcpResponsePreviewForLog(JSON.stringify(errBody)) });
                 trace.fail('Consensus adapter missing callMcpTool');
                 res.writeHead(500, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: { message: 'Consensus adapter missing callMcpTool' } }));
+                res.end(JSON.stringify(errBody));
                 return true;
             }
 
@@ -265,6 +314,10 @@ export async function handleConsensusMcpRoutes(method, pathName, req, res, curre
             trace.endPhase();
             trace.startPhase('respond', 'HTTP');
             const bodyStr = JSON.stringify(result);
+            trace.recordMcpResponseRaw(result);
+            trace.info('MCP', 'respond', `HTTP 200 mcporter call ${bodyStr.length} chars`, {
+                responsePreview: mcpResponsePreviewForLog(bodyStr),
+            });
             setMcpResponseHeaders(res);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(bodyStr);

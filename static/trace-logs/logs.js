@@ -187,6 +187,8 @@ function renderSCard(s){
   if(s.issueTags&&s.issueTags.length)items.push(['问题标签',escH(s.issueTags.join(', '))]);
   if(s.error)items.push(['错误','<span style="color:var(--red)">'+escH(s.error)+'</span>']);
   if(s.traceKind==='mcp'&&typeof s.httpStatus==='number')items.push(['HTTP',String(s.httpStatus)]);
+  if(s.traceKind==='mcp'&&typeof s.mcpClientRequestChars==='number'&&s.mcpClientRequestChars>0)items.push(['MCP 请求体',fmtN(s.mcpClientRequestChars)+' chars <span style="font-size:10px;color:var(--t3)">见「请求参数」</span>']);
+  if(s.traceKind==='mcp'&&typeof s.mcpResponseBodyChars==='number'&&s.mcpResponseBodyChars>0)items.push(['MCP 响应体',fmtN(s.mcpResponseBodyChars)+' chars <span style="font-size:10px;color:var(--t3)">见「响应内容」</span>']);
   document.getElementById('sgrid').innerHTML=items.map(([l,v])=>'<div class="si2"><span class="l">'+l+'</span><span class="v">'+v+'</span></div>').join('');
   renderPTL(s);
 }
@@ -228,11 +230,20 @@ function renderRequestTab(tc){
   if(s){
     h+='<div class="content-section"><div class="cs-title">📋 请求概要</div>';
     const sum={method:s.method,path:s.path,model:s.model,stream:s.stream,apiFormat:s.apiFormat,messageCount:s.messageCount,toolCount:s.toolCount,hasTools:s.hasTools};
-    if(s.traceKind==='mcp'){sum.note='MCP 代理（无模型补全 token 统计）'}
+    if(s.traceKind==='mcp'){sum.note='MCP 代理（无模型补全 token 统计；tools/call 完整参数见下方原始 JSON）'}
     h+='<div class="resp-box">'+syntaxHL(sum)+'</div></div>';
   }
+  if(curPayload.mcpHttp){
+    h+='<div class="content-section"><div class="cs-title">🔐 MCP 入站 HTTP（Authorization 仅标记是否携带与长度，不记录密钥明文）</div>';
+    h+='<div style="color:var(--t2);font-size:12px;margin-bottom:8px"><code>bearerTokenSent</code> / <code>bearerTokenLength</code> 表示客户端是否在 <code>Authorization</code> 中发送了 Bearer token（通常即本服务 API Key）。</div>';
+    h+='<div class="resp-box">'+syntaxHL(curPayload.mcpHttp)+'<button class="copy-btn" onclick="copyText(JSON.stringify(curPayload.mcpHttp,null,2))">复制</button></div></div>';
+  }
+  if(curPayload.mcpClientRequestRaw){
+    h+='<div class="content-section"><div class="cs-title">📨 MCP 客户端请求全报文（JSON 体，含 tools/call 的 params） <span class="cnt" style="background:var(--purple);color:#fff">'+fmtN(curPayload.mcpClientRequestRaw.length)+' chars</span></div>';
+    h+='<pre class="raw-upstream-json">'+escH(curPayload.mcpClientRequestRaw)+'</pre><button class="copy-btn" onclick="copyText(curPayload.mcpClientRequestRaw)">复制全部</button></div>';
+  }
   if(curPayload.mcp){
-    h+='<div class="content-section"><div class="cs-title">🔌 MCP（必要元数据，不含工具参数与 token）</div>';
+    h+='<div class="content-section"><div class="cs-title">🔌 MCP 路由摘要（方法 / 工具名 / HTTP 状态）</div>';
     h+='<div class="resp-box">'+syntaxHL(curPayload.mcp)+'</div></div>';
   }
   if(curPayload.tools&&curPayload.tools.length){
@@ -332,6 +343,11 @@ function renderPromptsTab(tc){
 function renderResponseTab(tc){
   if(!curPayload){tc.innerHTML='<div class="empty"><div class="ic">📤</div><p>暂无响应数据</p></div>';return}
   let h='';
+  if(curPayload.mcpHttpResponseRaw&&String(curPayload.mcpHttpResponseRaw).length>0){
+    h+='<div class="content-section"><div class="cs-title">🔌 MCP HTTP 响应全报文（返回给客户端的 JSON） <span class="cnt" style="background:var(--orange);color:#fff">'+fmtN(curPayload.mcpHttpResponseRaw.length)+' chars</span></div>';
+    h+='<div style="color:var(--t2);font-size:12px;margin-bottom:8px">含 JSON-RPC 的 <code>result</code> / <code>error</code>；与线路日志中「MCP · respond」详情里的预览一致，此处为完整落库内容（可能有截断上限）。</div>';
+    h+='<pre class="raw-upstream-json" style="border-color:var(--orange)">'+escH(curPayload.mcpHttpResponseRaw)+'</pre><button class="copy-btn" onclick="copyText(curPayload.mcpHttpResponseRaw)">复制全部</button></div>';
+  }
   const hasAgg=curPayload.rawResponse&&String(curPayload.rawResponse).length>0;
   const hasNd=curPayload.streamTraceNdjson&&String(curPayload.streamTraceNdjson).length>0;
   if(hasNd&&!hasAgg){
