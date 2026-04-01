@@ -19,6 +19,9 @@ import {
 const MAX_ENTRIES = 5000;
 const MAX_REQUESTS = 200;
 
+/** 流式链路日志：上游分块 NDJSON 累积上限（字符），便于在聚合文本为空时仍能排查 */
+export const MAX_STREAM_TRACE_NDJSON_CHARS = 2_000_000;
+
 let logCounter = 0;
 const logEntries = [];
 const requestSummaries = new Map();
@@ -126,6 +129,47 @@ function sanitizeForStorage(obj) {
         }
     }
     return result;
+}
+
+/** 链路日志：发往上游的「消息」侧 JSON，不做 extractText 等解析，便于排查 */
+const MAX_UPSTREAM_MESSAGES_RAW_CHARS = 1_500_000;
+
+function buildUpstreamMessagesRaw(body) {
+    if (!body || typeof body !== 'object') return '';
+    const slice = {};
+    const topKeys = [
+        'messages',
+        'system',
+        'contents',
+        'input',
+        'instructions',
+        'tools',
+        'tool_choice',
+        'functions',
+        'parallel_tool_calls',
+    ];
+    for (const k of topKeys) {
+        if (body[k] !== undefined) slice[k] = body[k];
+    }
+    if (body.request && typeof body.request === 'object') {
+        const r = body.request;
+        const nested = {};
+        if (r.contents !== undefined) nested.contents = r.contents;
+        if (r.systemInstruction !== undefined) nested.systemInstruction = r.systemInstruction;
+        if (r.tools !== undefined) nested.tools = r.tools;
+        if (Object.keys(nested).length) slice.request = nested;
+    }
+    if (Object.keys(slice).length === 0) return '';
+    try {
+        let s = JSON.stringify(slice, null, 2);
+        const origLen = s.length;
+        if (origLen > MAX_UPSTREAM_MESSAGES_RAW_CHARS) {
+            s = `${s.slice(0, MAX_UPSTREAM_MESSAGES_RAW_CHARS)}\n\n... [已截断，总长度约 ${origLen} chars，完整内容见服务端或缩小请求]`;
+        }
+        return s;
+    } catch {
+        return '';
+    }
 }
 
 function extractTextParts(value) {
@@ -682,6 +726,11 @@ export class RequestLogger {
             endpoint: body.endpoint,
         };
         this._payload.upstreamRequest = sanitizeForStorage(body);
+        const upstreamMessagesRaw = buildUpstreamMessagesRaw(body);
+        if (upstreamMessagesRaw) {
+            this._payload.upstreamMessagesRaw = upstreamMessagesRaw;
+            this.updateSummary({ upstreamMessagesChars: upstreamMessagesRaw.length });
+        }
     }
 
     recordRawResponse(text) {
@@ -690,6 +739,13 @@ export class RequestLogger {
 
     recordFinalResponse(text) {
         this._payload.finalResponse = text;
+    }
+
+    /** 流式：上游 nativeChunk 逐行 JSON.stringify，未做文本抽取，供排查协议/分块结构 */
+    recordStreamTraceNdjson(text) {
+        if (typeof text === 'string' && text.length > 0) {
+            this._payload.streamTraceNdjson = text;
+        }
     }
 
     recordThinking(content) {

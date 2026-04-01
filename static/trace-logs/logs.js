@@ -134,12 +134,13 @@ function renderRL(){
     if(r.retryCount>0)bd+='<span class="bg rtr">R:'+r.retryCount+'</span>';if(r.continuationCount>0)bd+='<span class="bg cnt">C:'+r.continuationCount+'</span>';
     if(r.status==='degraded')bd+='<span class="bg dgd">DEGRADED</span>';if(r.status==='error')bd+='<span class="bg err">ERR</span>';if(r.status==='intercepted')bd+='<span class="bg icp">INTERCEPT</span>';
     const fm=r.apiFormat||'anthropic';
+    const umc=typeof r.upstreamMessagesChars==='number'&&r.upstreamMessagesChars>0?'<span class="umc" title="上游消息(JSON)字符数">U:'+fmtN(r.upstreamMessagesChars)+'</span>':'';
     return '<div class="ri'+(ac?' a':'')+'" data-r="'+r.requestId+'">'
       +'<div class="si-dot '+r.status+'"></div>'
       +'<div class="ri-title">'+escH(title)+'</div>'
       +'<div class="ri-time">'+dateStr+' · '+dur+(tt?' · ⚡'+tt:'')+'</div>'
       +'<div class="r1"><span class="rid">'+r.requestId+' <span class="rfmt '+fm+'">'+fm+'</span></span>'
-      +(ch?'<span class="rch">→ '+ch+'</span>':'')+'</div>'
+      +((ch||umc)?'<span class="r1-meta">'+(ch?'<span class="rch">→ '+ch+'</span>':'')+umc+'</span>':'')+'</div>'
       +'<div class="rbd">'+bd+'</div>'
       +'<div class="rdbar"><div class="rdfill '+dc+'" style="width:'+pct+'%"></div></div></div>';
   }).join('');
@@ -176,10 +177,12 @@ function renderSCard(s){
   const c=document.getElementById('scard');c.style.display='block';
   const dur=s.endTime?((s.endTime-s.startTime)/1000).toFixed(2)+'s':'进行中...';
   const sc={processing:'var(--yellow)',success:'var(--green)',degraded:'var(--orange)',error:'var(--red)',intercepted:'var(--pink)'}[s.status]||'var(--t3)';
-  const items=[['状态','<span style="color:'+sc+'">'+s.status.toUpperCase()+'</span>'],['耗时',dur],['模型',escH(s.model)],['格式',(s.apiFormat||'anthropic').toUpperCase()],['消息数',s.messageCount],['响应字数',fmtN(s.responseChars)],['TTFT',s.ttft?s.ttft+'ms':'-'],['API耗时',s.cursorApiTime?s.cursorApiTime+'ms':'-'],['停止原因',s.stopReason||'-'],['重试',s.retryCount],['续写',s.continuationCount],['工具调用',s.toolCallsDetected]];
+  const items=[['状态','<span style="color:'+sc+'">'+s.status.toUpperCase()+'</span>'],['耗时',dur],['模型',escH(s.model)],['格式',(s.apiFormat||'anthropic').toUpperCase()],['消息数',s.messageCount],['响应字数',typeof s.responseChars==='number'?fmtN(s.responseChars):'-'],['TTFT',s.ttft?s.ttft+'ms':'-'],['API耗时',typeof s.cursorApiTime==='number'?s.cursorApiTime+'ms':'-'],['停止原因',s.stopReason||'-'],['重试',s.retryCount],['续写',s.continuationCount],['工具调用',s.toolCallsDetected]];
   if(s.thinkingChars>0)items.push(['Thinking',fmtN(s.thinkingChars)+' chars']);
   if(typeof s.inputTokens==='number')items.push(['↑ 代理输入 tokens',fmtN(s.inputTokens)]);
   if(typeof s.outputTokens==='number')items.push(['↓ 代理输出 tokens',fmtN(s.outputTokens)]);
+  if(typeof s.upstreamMessagesChars==='number'&&s.upstreamMessagesChars>0)items.push(['上游消息 JSON',fmtN(s.upstreamMessagesChars)+' chars <span style="font-size:10px;color:var(--t3)">见「请求参数」</span>']);
+  if(typeof s.streamTraceChars==='number'&&s.streamTraceChars>0)items.push(['流式分块 NDJSON',fmtN(s.streamTraceChars)+' chars <span style="font-size:10px;color:var(--t3)">见「响应内容」</span>']);
   if(s.statusReason)items.push(['降级原因',escH(s.statusReason)]);
   if(s.issueTags&&s.issueTags.length)items.push(['问题标签',escH(s.issueTags.join(', '))]);
   if(s.error)items.push(['错误','<span style="color:var(--red)">'+escH(s.error)+'</span>']);
@@ -217,6 +220,11 @@ function renderRequestTab(tc){
   if(!curPayload){tc.innerHTML='<div class="empty"><div class="ic">📥</div><p>暂无请求数据</p></div>';return}
   let h='';
   const s=selId?rmap[selId]:null;
+  if(curPayload.upstreamMessagesRaw){
+    h+='<div class="content-section"><div class="cs-title">📤 发往上游的「消息」原始 JSON <span class="cnt" style="background:var(--purple);color:#fff">'+fmtN(curPayload.upstreamMessagesRaw.length)+' chars</span></div>';
+    h+='<div style="color:var(--t2);font-size:12px;margin-bottom:8px">未做文本抽取/拼接，与 <code>messages</code> / <code>contents</code> / <code>input</code> 等字段在请求体中的结构一致，便于对照上游 API 排查。</div>';
+    h+='<pre class="raw-upstream-json">'+escH(curPayload.upstreamMessagesRaw)+'</pre><button class="copy-btn" onclick="copyText(curPayload.upstreamMessagesRaw)">复制全部</button></div>';
+  }
   if(s){
     h+='<div class="content-section"><div class="cs-title">📋 请求概要</div>';
     const sum={method:s.method,path:s.path,model:s.model,stream:s.stream,apiFormat:s.apiFormat,messageCount:s.messageCount,toolCount:s.toolCount,hasTools:s.hasTools};
@@ -324,6 +332,11 @@ function renderPromptsTab(tc){
 function renderResponseTab(tc){
   if(!curPayload){tc.innerHTML='<div class="empty"><div class="ic">📤</div><p>暂无响应数据</p></div>';return}
   let h='';
+  const hasAgg=curPayload.rawResponse&&String(curPayload.rawResponse).length>0;
+  const hasNd=curPayload.streamTraceNdjson&&String(curPayload.streamTraceNdjson).length>0;
+  if(hasNd&&!hasAgg){
+    h+='<div style="color:var(--yellow);font-size:12px;padding:8px 10px;background:rgba(234,179,8,0.1);border-radius:6px;margin-bottom:12px">⚠️ 未能从分块中抽取聚合文本（<code>extractResponseText</code> 可能未覆盖该上游格式）。下方为<strong>上游 nativeChunk</strong> 的 NDJSON 原始记录，便于排查。</div>';
+  }
   if(curPayload.answer){
     const title=curPayload.answerType==='tool_calls'?'✅ 最终结果（工具调用摘要）':'✅ 最终回答摘要';
     h+='<div class="content-section"><div class="cs-title">'+title+' <span class="cnt">'+fmtN(curPayload.answer.length)+' chars</span></div>';
@@ -337,9 +350,14 @@ function renderResponseTab(tc){
     h+='<div class="content-section"><div class="cs-title">🧠 Thinking 内容 <span class="cnt">'+fmtN(curPayload.thinkingContent.length)+' chars</span></div>';
     h+='<div class="resp-box" style="border-color:var(--purple);max-height:300px">'+escH(curPayload.thinkingContent)+'<button class="copy-btn" onclick="copyText(curPayload.thinkingContent)">复制</button></div></div>';
   }
-  if(curPayload.rawResponse){
-    h+='<div class="content-section"><div class="cs-title">📝 模型原始返回 <span class="cnt">'+fmtN(curPayload.rawResponse.length)+' chars</span></div>';
+  if(hasAgg){
+    h+='<div class="content-section"><div class="cs-title">📝 聚合文本（从分块抽取）<span class="cnt">'+fmtN(curPayload.rawResponse.length)+' chars</span></div>';
     h+='<div class="resp-box" style="max-height:400px">'+escH(curPayload.rawResponse)+'<button class="copy-btn" onclick="copyText(curPayload.rawResponse)">复制</button></div></div>';
+  }
+  if(hasNd){
+    h+='<div class="content-section"><div class="cs-title">📡 流式上游分块（NDJSON，未解析）<span class="cnt">'+fmtN(curPayload.streamTraceNdjson.length)+' chars</span></div>';
+    h+='<div style="color:var(--t2);font-size:12px;margin-bottom:8px">每行一个 <code>JSON.stringify(nativeChunk)</code>，与协议转换前上游流一致。</div>';
+    h+='<pre class="raw-upstream-json" style="border-color:var(--cyan)">'+escH(curPayload.streamTraceNdjson)+'</pre><button class="copy-btn" onclick="copyText(curPayload.streamTraceNdjson)">复制 NDJSON</button></div>';
   }
   if(curPayload.finalResponse&&curPayload.finalResponse!==curPayload.rawResponse){
     h+='<div class="content-section"><div class="cs-title">✅ 最终响应（处理后）<span class="cnt">'+fmtN(curPayload.finalResponse.length)+' chars</span></div>';
@@ -359,7 +377,7 @@ function renderResponseTab(tc){
     curPayload.continuationResponses.forEach(r=>{h+='<div class="retry-item"><div class="retry-header" style="color:var(--orange)">续写 #'+r.index+' (去重后 '+fmtN(r.dedupedLength)+' chars)</div><div class="retry-body">'+escH(r.response.substring(0,1000))+(r.response.length>1000?'\n...':'')+'</div></div>'});
     h+='</div>';
   }
-  tc.innerHTML=h||'<div class="empty"><div class="ic">📤</div><p>暂无响应数据</p></div>';
+  tc.innerHTML=h||'<div class="empty"><div class="ic">📤</div><p>暂无响应数据</p><p class="sub">流式请求请查看「聚合文本」或「流式 NDJSON」区块（新版本会记录分块）</p></div>';
 }
 
 // ===== Log rendering =====

@@ -6,7 +6,12 @@ import logger from './logger.js';
 import { convertData, getOpenAIStreamChunkStop } from '../convert/convert.js';
 import { ProviderStrategyFactory } from './provider-strategies.js';
 import { getPluginManager } from '../core/plugin-manager.js';
-import { createApiTraceLogger, countMessagesInBody, countToolsInBody } from './api-trace-logger.js';
+import {
+    createApiTraceLogger,
+    countMessagesInBody,
+    countToolsInBody,
+    MAX_STREAM_TRACE_NDJSON_CHARS,
+} from './api-trace-logger.js';
 import { estimateTraceInputTokens, estimateTraceOutputTokens } from './token-utils.js';
 import {
     appendContinuationRound,
@@ -308,6 +313,9 @@ export async function handleUnifiedResponse(res, responsePayload, isStream) {
 
 export async function handleStreamRequest(res, service, model, requestBody, fromProvider, toProvider, PROMPT_LOG_MODE, PROMPT_LOG_FILENAME, providerPoolManager, pooluuid, customName, retryContext = null) {
     let fullResponseText = '';
+    /** 链路日志：上游分块 NDJSON（与 extractResponseText 无关，避免聚合文本为空时无响应可查） */
+    let streamTraceNdjson = '';
+    let streamNdjsonLen = 0;
     let fullResponseJson = '';
     let fullOldResponseJson = '';
     let responseClosed = false;
@@ -351,17 +359,19 @@ export async function handleStreamRequest(res, service, model, requestBody, from
     let hasToolCall = false;
     let hasMessageStop = false; // 跟踪是否已经发送过结束标志（message_stop / done）
     let stopReason;
+    /** 流式：从调用 generateContentStream 到消费完整个流，用于 finally 中计算真实上游耗时 */
+    let tUpstreamStart = 0;
 
     try {
         // fs.writeFile('request'+Date.now()+'.json', JSON.stringify(requestBody));
         // The service returns a stream in its native format (toProvider).
         const needsConversion = getProtocolPrefix(fromProvider) !== getProtocolPrefix(toProvider);
         requestBody.model = model;
-        const tUpstream = Date.now();
+        tUpstreamStart = Date.now();
         const nativeStream = await service.generateContentStream(model, requestBody);
         const trace = CONFIG?._apiTraceLogger;
         if (trace && trace.isProcessing()) {
-            trace.recordUpstreamApiTime(tUpstream);
+            // 流式不可在 await 返回后立即 recordUpstreamApiTime：那只是「拿到 stream」≈0ms，且 UI 把 0 当 falsy。真实耗时见 finally 的 cursorApiTime。
             trace.endPhase();
             trace.startPhase('response', '流式响应');
         }
@@ -371,6 +381,21 @@ export async function handleStreamRequest(res, service, model, requestBody, from
 
         let firstChunk = true;
         for await (const nativeChunk of nativeStream) {
+            if (streamNdjsonLen < MAX_STREAM_TRACE_NDJSON_CHARS) {
+                try {
+                    const line = `${JSON.stringify(nativeChunk)}\n`;
+                    const room = MAX_STREAM_TRACE_NDJSON_CHARS - streamNdjsonLen;
+                    if (line.length <= room) {
+                        streamTraceNdjson += line;
+                        streamNdjsonLen += line.length;
+                    } else if (room > 0) {
+                        streamTraceNdjson += line.slice(0, room);
+                        streamNdjsonLen = MAX_STREAM_TRACE_NDJSON_CHARS;
+                    }
+                } catch (e) {
+                    logger.debug('[Stream] stream trace NDJSON skip chunk:', e?.message);
+                }
+            }
             if (firstChunk && trace && trace.isProcessing()) {
                 trace.recordTTFT();
                 firstChunk = false;
@@ -704,13 +729,26 @@ export async function handleStreamRequest(res, service, model, requestBody, from
         const traceFin = CONFIG?._apiTraceLogger;
         if (traceFin && traceFin.isProcessing()) {
             traceFin.endPhase();
+            if (streamTraceNdjson) {
+                traceFin.recordStreamTraceNdjson(streamTraceNdjson);
+            }
             traceFin.recordRawResponse(fullResponseText);
             traceFin.recordFinalResponse(fullResponseText);
+            const textForOutTok =
+                fullResponseText.length > 0
+                    ? fullResponseText
+                    : streamTraceNdjson.length > 0
+                      ? streamTraceNdjson.slice(0, 500_000)
+                      : '';
+            const apiMs = tUpstreamStart > 0 ? Date.now() - tUpstreamStart : undefined;
             traceFin.updateSummary({
                 toolCallsDetected: hasToolCall ? 1 : 0,
-                outputTokens: estimateTraceOutputTokens(fullResponseText),
+                outputTokens: estimateTraceOutputTokens(textForOutTok),
+                streamTraceChars: streamTraceNdjson.length || undefined,
+                ...(apiMs !== undefined ? { cursorApiTime: apiMs } : {}),
             });
-            traceFin.complete(fullResponseText.length, stopReason);
+            const respChars = fullResponseText.length > 0 ? fullResponseText.length : streamTraceNdjson.length;
+            traceFin.complete(respChars, stopReason);
         }
         // fs.writeFile('oldResponseChunk'+Date.now()+'.json', fullOldResponseJson);
         // fs.writeFile('responseChunk'+Date.now()+'.json', fullResponseJson);
