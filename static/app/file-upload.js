@@ -59,6 +59,7 @@ class FileUploadHandler {
             'claude-kiro-oauth': 'kiro',
             'openai-qwen-oauth': 'qwen',
             'openai-iflow': 'iflow',
+            'openai-codex-oauth': 'codex',
             'consensus-mcp-oauth': 'consensus'
         };
         return providerMap[provider] || 'gemini';

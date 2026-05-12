@@ -14,7 +14,8 @@ import {
     formatSystemPath
 } from '../utils/provider-utils.js';
 import { broadcastEvent } from '../ui-modules/event-broadcast.js';
-import { MODEL_PROVIDER } from '../utils/common.js';
+import { withFileLock, atomicWriteFile } from '../utils/file-lock.js';
+import { MODEL_PROVIDER } from '../utils/constants.js';
 
 // 存储 ProviderPoolManager 实例
 let providerPoolManager = null;
@@ -92,7 +93,9 @@ export async function autoLinkProviderConfigs(config, options = {}) {
     if (totalNewProviders > 0) {
         const filePath = config.PROVIDER_POOLS_FILE_PATH || 'configs/provider_pools.json';
         try {
-            await pfs.writeFile(filePath, JSON.stringify(config.providerPools, null, 2), 'utf8');
+            await withFileLock(filePath, async () => {
+                await atomicWriteFile(filePath, JSON.stringify(config.providerPools, null, 2), 'utf8');
+            });
             logger.info(`[Auto-Link] Added ${totalNewProviders} new config(s) to provider pools:`);
             for (const [displayName, providers] of Object.entries(allNewProviders)) {
                 logger.info(`  ${displayName}: ${providers.length} config(s)`);
@@ -289,14 +292,21 @@ async function scanProviderDirectory(dirPath, linkedPaths, newProviders, options
  */
 export async function initApiService(config, isReady = false) {
 
-    if (config.providerPools && Object.keys(config.providerPools).length > 0) {
-        providerPoolManager = new ProviderPoolManager(config.providerPools, {
+    // Initialize or update ProviderPoolManager
+    if (providerPoolManager) {
+        providerPoolManager.providerPools = config.providerPools || {};
+        providerPoolManager.initializeProviderStatus();
+        logger.info('[Initialization] ProviderPoolManager existing instance updated.');
+    } else {
+        providerPoolManager = new ProviderPoolManager(config.providerPools || {}, {
             globalConfig: config,
-            maxErrorCount: config.MAX_ERROR_COUNT ?? 3,
+            maxErrorCount: config.MAX_ERROR_COUNT ?? 10,
             providerFallbackChain: config.providerFallbackChain || {},
         });
-        logger.info('[Initialization] ProviderPoolManager initialized with configured pools.');
+        logger.info('[Initialization] ProviderPoolManager initialized.');
+    }
 
+    if (config.providerPools && Object.keys(config.providerPools).length > 0) {
         if(isReady){
             // --- V2: 触发系统预热 ---
             // 预热逻辑是异步的，不会阻塞服务器启动
@@ -309,10 +319,8 @@ export async function initApiService(config, isReady = false) {
                 logger.error(`[Initialization] Check and refresh expiring nodes failed: ${err.message}`);
             });
         }
-
-        // 健康检查将在服务器完全启动后执行
     } else {
-        logger.info('[Initialization] No provider pools configured. Using single provider mode.');
+        logger.info('[Initialization] Provider pools are currently empty.');
     }
 
     // Initialize all provider pool nodes at startup
@@ -322,9 +330,17 @@ export async function initApiService(config, isReady = false) {
         let totalFailed = 0;
         
         for (const [providerType, providerConfigs] of Object.entries(config.providerPools)) {
-            // 验证提供商类型是否在 DEFAULT_MODEL_PROVIDERS 中
-            if (config.DEFAULT_MODEL_PROVIDERS && Array.isArray(config.DEFAULT_MODEL_PROVIDERS)) {
-                if (!config.DEFAULT_MODEL_PROVIDERS.includes(providerType)) {
+            // 验证提供商类型是否有效且被包含在 DEFAULT_MODEL_PROVIDERS 中
+            // 如果没设置 DEFAULT_MODEL_PROVIDERS，则允许所有已注册的类型
+            const isDefaultProvider = !config.DEFAULT_MODEL_PROVIDERS || 
+                                     (Array.isArray(config.DEFAULT_MODEL_PROVIDERS) && config.DEFAULT_MODEL_PROVIDERS.includes(providerType));
+            
+            if (!isDefaultProvider) {
+                // 进一步检查是否是注册提供商的变体（带后缀）
+                const isVariantOfDefault = Array.isArray(config.DEFAULT_MODEL_PROVIDERS) && 
+                                          config.DEFAULT_MODEL_PROVIDERS.some(p => providerType.startsWith(p + '-'));
+                
+                if (!isVariantOfDefault) {
                     logger.info(`[Initialization] Skipping provider type '${providerType}' (not in DEFAULT_MODEL_PROVIDERS).`);
                     continue;
                 }
@@ -418,8 +434,9 @@ export async function getApiService(config, requestedModel = null, options = {})
     if (effectiveProvider === MODEL_PROVIDER.AUTO && !actualModelName) return null;
 
     let serviceConfig = config;
-    if (providerPoolManager && config.providerPools && config.providerPools[config.MODEL_PROVIDER]) {
-        // 如果有号池管理器，并且当前模型提供者类型有对应的号池，则从号池中选择一个提供者配置
+    const isPoolable = PROVIDER_MAPPINGS.some(m => m.providerType === config.MODEL_PROVIDER);
+    if (providerPoolManager && ((config.providerPools && config.providerPools[config.MODEL_PROVIDER]) || isPoolable)) {
+        // 如果有号池管理器，并且当前模型提供者类型有对应的号池（或属于号池类型提供商），则从号池中选择一个提供者配置
         // selectProvider 现在是异步的，使用链式锁确保并发安全
         const selectedProviderConfig = await providerPoolManager.selectProvider(config.MODEL_PROVIDER, actualModelName, { ...options, skipUsageCount: true });
         if (selectedProviderConfig) {
@@ -465,7 +482,8 @@ export async function getApiServiceWithFallback(config, requestedModel = null, o
     let selectedUuid = null;
     let actualModel = actualModelName;
     
-    if (providerPoolManager && config.providerPools && config.providerPools[config.MODEL_PROVIDER]) {
+    const isPoolable = PROVIDER_MAPPINGS.some(m => m.providerType === config.MODEL_PROVIDER);
+    if (providerPoolManager && ((config.providerPools && config.providerPools[config.MODEL_PROVIDER]) || isPoolable)) {
         // selectProviderWithFallback 现在是异步的，使用链式锁确保并发安全
         // 如果开启了并发限制，则使用 acquireSlot 进行选择和占位
         const useAcquire = options.acquireSlot === true;
@@ -503,7 +521,7 @@ export async function getApiServiceWithFallback(config, requestedModel = null, o
                 serviceConfig.MODEL_PROVIDER = actualProviderType;
             }
         } else {
-            const errorMsg = `[API Service] No healthy provider found in pool (including fallback) for ${config.MODEL_PROVIDER}${actualModelName ? ` supporting model: ${actualModelName}` : ''}`;
+            const errorMsg = `[API Service] No healthy provider found in pool for ${config.MODEL_PROVIDER}${actualModelName ? ` supporting model: ${actualModelName}` : ''}`;
             logger.error(errorMsg);
             throw new Error(errorMsg);
         }
@@ -565,12 +583,15 @@ export async function getProviderStatus(config, options = {}) {
         logger.warn('[API Service] Failed to load provider pools:', error.message);
     }
 
-    // providerPoolsSlim 只保留顶级 key 及部分字段，过滤 isDisabled 为 true 的元素
+    // providerPoolsSlim 只保留顶级 key 及部分字段
     const slimFields = [
+        'uuid',
         'customName',
         'isHealthy',
+        'isDisabled',
         'lastErrorTime',
-        'lastErrorMessage'
+        'lastErrorMessage',
+        'needsRefresh'
     ];
     // identify 字段映射表
     const identifyFieldMap = {
@@ -583,7 +604,8 @@ export async function getProviderStatus(config, options = {}) {
         'gemini-antigravity': 'ANTIGRAVITY_OAUTH_CREDS_FILE_PATH',
         'openai-iflow': 'IFLOW_TOKEN_FILE_PATH',
         'forward-api': 'FORWARD_BASE_URL',
-        'grok-custom': 'GROK_COOKIE_TOKEN',
+        'grok-web': 'GROK_COOKIE_TOKEN',
+        'openai-codex-oauth': 'CODEX_OAUTH_CREDS_FILE_PATH',
         'consensus-mcp-oauth': 'CONSENSUS_MCPORTER_CONFIG_PATH'
     };
     let providerPoolsSlim = [];
@@ -596,7 +618,18 @@ export async function getProviderStatus(config, options = {}) {
     for (const key of Object.keys(providerPools)) {
         if (!Array.isArray(providerPools[key])) continue;
         if (filterProvider && key !== filterProvider) continue;
-        const identifyField = identifyFieldMap[key] || null;
+        
+        let identifyField = identifyFieldMap[key] || null;
+        if (!identifyField) {
+            // 尝试通过前缀查找 identifyField (例如 openai-custom-1 -> openai-custom)
+            for (const [prefix, field] of Object.entries(identifyFieldMap)) {
+                if (key.startsWith(prefix + '-')) {
+                    identifyField = field;
+                    break;
+                }
+            }
+        }
+        
         const slimArr = providerPools[key]
             .filter(item => {
                 if (item.isDisabled) return false;
@@ -610,8 +643,8 @@ export async function getProviderStatus(config, options = {}) {
                 }
                 // identify 字段
                 if (identifyField && item.hasOwnProperty(identifyField)) {
-                    let tmpCustomName = item.customName ? `${item.customName}` : 'NoCustomName';
-                    let identifyStr = `${tmpCustomName}::${key}::${item[identifyField]}`;
+                    let tmpCustomName = item.customName ? `${item.customName}` : (item.uuid || 'NoUUID');
+                    let identifyStr = `${tmpCustomName}::${key}`;
                     slim.identify = identifyStr;
                 } else {
                     slim.identify = null;

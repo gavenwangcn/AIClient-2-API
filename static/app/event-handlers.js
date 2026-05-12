@@ -3,7 +3,8 @@
 import { elements, autoScroll, setAutoScroll, clearLogs } from './constants.js';
 import { showToast } from './utils.js';
 import { t } from './i18n.js';
-import { checkUpdate, performUpdate } from './provider-manager.js';
+import { checkUpdate, performUpdate, loadProviders } from './provider-manager.js';
+import { switchSectionIfActive } from './navigation.js';
 
 /**
  * 初始化所有事件监听器
@@ -27,7 +28,7 @@ function initEventListeners() {
             try {
                 const token = window.authManager.getToken();
                 if (!token) {
-                    showToast(t('common.error'), '请先登录', 'error');
+                    showToast(t('common.error'), t('common.loginRequired'), 'error');
                     return;
                 }
                 
@@ -41,7 +42,7 @@ function initEventListeners() {
                 });
                 
                 if (response.status === 401) {
-                    showToast(t('common.error'), '认证失败，请重新登录', 'error');
+                    showToast(t('common.error'), t('common.unauthorized'), 'error');
                     window.authManager.clearToken();
                     window.location.href = '/login.html';
                     return;
@@ -79,7 +80,7 @@ function initEventListeners() {
             try {
                 const token = window.authManager.getToken();
                 if (!token) {
-                    showToast(t('common.error'), '请先登录', 'error');
+                    showToast(t('common.error'), t('common.loginRequired'), 'error');
                     return;
                 }
                 
@@ -93,43 +94,32 @@ function initEventListeners() {
                 });
                 
                 if (response.status === 401) {
-                    showToast(t('common.error'), '认证失败，请重新登录', 'error');
+                    showToast(t('common.error'), t('common.unauthorized'), 'error');
                     window.authManager.clearToken();
                     window.location.href = '/login.html';
                     return;
                 }
                 
                 if (!response.ok) {
-                    const errorData = await response.json();
-                    showToast(t('common.error'), errorData.error?.message || '下载失败', 'error');
+                    const errorData = await response.json().catch(() => ({}));
+                    showToast(t('common.error'), errorData.error?.message || t('common.downloadFailed'), 'error');
                     return;
                 }
-                
-                // 获取文件名
-                const contentDisposition = response.headers.get('Content-Disposition');
-                let filename = 'app.log';
-                if (contentDisposition) {
-                    const matches = /filename="?([^"]+)"?/.exec(contentDisposition);
-                    if (matches && matches[1]) {
-                        filename = matches[1];
-                    }
-                }
-                
-                // 下载文件
+
                 const blob = await response.blob();
                 const downloadUrl = window.URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = downloadUrl;
-                a.download = filename;
+                a.download = `app-${new Date().toISOString().split('T')[0]}.log`;
                 document.body.appendChild(a);
                 a.click();
+                window.URL.revokeObjectURL(downloadUrl);
                 document.body.removeChild(a);
-        window.URL.revokeObjectURL(downloadUrl);
                 
-                showToast(t('common.success'), '日志下载成功', 'success');
+                showToast(t('common.success'), t('common.downloadSuccess'), 'success');
             } catch (error) {
                 console.error('下载日志失败:', error);
-                showToast(t('common.error'), '下载失败: ' + error.message, 'error');
+                showToast(t('common.error'), t('common.downloadFailed') + ': ' + error.message, 'error');
             }
         });
     }
@@ -217,6 +207,38 @@ function initEventListeners() {
     const performUpdateBtn = document.getElementById('performUpdateBtn');
     if (performUpdateBtn) {
         performUpdateBtn.addEventListener('click', performUpdate);
+    }
+
+    // 刷新提供商状态按钮
+    const refreshProviderStatusBtn = document.getElementById('refreshProviderStatusBtn');
+    if (refreshProviderStatusBtn) {
+        refreshProviderStatusBtn.addEventListener('click', () => {
+            const icon = refreshProviderStatusBtn.querySelector('i');
+            if (icon) icon.classList.add('fa-spin');
+            loadProviders(true).finally(() => {
+                if (icon) icon.classList.remove('fa-spin');
+            });
+        });
+    }
+
+    // 添加提供商组按钮
+    const addProviderGroupBtn = document.getElementById('add-provider-group-btn');
+    if (addProviderGroupBtn) {
+        addProviderGroupBtn.addEventListener('click', () => {
+            if (window.showAddProviderGroupModal) {
+                window.showAddProviderGroupModal();
+            } else {
+                console.error('showAddProviderGroupModal function not found');
+            }
+        });
+    }
+
+    // 提供商搜索功能
+    const providerSearchInput = document.getElementById('providerSearchInput');
+    if (providerSearchInput) {
+        providerSearchInput.addEventListener('input', () => {
+            loadProviders();
+        });
     }
 
     // 日志容器滚动
@@ -426,17 +448,7 @@ function handleProviderPoolsConfigChange(event) {
         if (providersMenuItem) providersMenuItem.style.display = 'none';
         
         // 如果当前在提供商池页面，切换到仪表盘
-        if (providersMenuItem && providersMenuItem.classList.contains('active')) {
-            const dashboardItem = document.querySelector('.nav-item[data-section="dashboard"]');
-            const dashboardSection = document.getElementById('dashboard');
-            
-            // 更新导航状态
-            document.querySelectorAll('.nav-item').forEach(nav => nav.classList.remove('active'));
-            document.querySelectorAll('.section').forEach(section => section.classList.remove('active'));
-            
-            if (dashboardItem) dashboardItem.classList.add('active');
-            if (dashboardSection) dashboardSection.classList.add('active');
-        }
+        switchSectionIfActive('providers', 'dashboard');
     }
 }
 

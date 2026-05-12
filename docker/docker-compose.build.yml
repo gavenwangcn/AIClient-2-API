@@ -1,7 +1,7 @@
 services:
   aiclient-api:
     # 方式二：从 Dockerfile 本地构建
-    # 使用方法: docker compose -f docker-compose.build.yml up -d --build
+    # 使用方法: docker compose -f docker/docker-compose.build.yml -f docker/docker-compose.dev.yml up -d --build
     build:
       context: ..
       dockerfile: Dockerfile
@@ -9,16 +9,16 @@ services:
     restart: unless-stopped
     ports:
       - "3000:3000"
-      - "8085-8087:8085-8087" 
+      - "8085-8087:8085-8087"
       - "1455:1455"
       # OAuth 固定回调：宿主机浏览器 -> localhost:19876 -> 容器内 mcporter 监听（与 CONSENSUS_MCPORTER_OAUTH_REDIRECT_URL 一致）
       - "19876:19876"
       - "19877-19880:19877-19880"
     volumes:
-      - ./configs:/app/configs
-      - ./logs:/app/logs
+      - ../configs:/app/configs
+      - ../logs:/app/logs
       # mcporter OAuth 持久化：Linux 下 vault 为 $HOME/.mcporter/credentials.json（含 access_token / refresh_token）
-      - ./mcporter-data:/app/.mcporter
+      - ../mcporter-data:/app/.mcporter
     environment:
       - ARGS=
       # 与 Dockerfile 一致，使 mcporter 将 ~/.mcporter 落在 /app/.mcporter 并随卷持久化

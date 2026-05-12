@@ -1,3 +1,4 @@
+import { atomicWriteFile } from '../utils/file-lock.js';
 import { existsSync } from 'fs';
 import logger from '../utils/logger.js';
 import { promises as fs } from 'fs';
@@ -5,6 +6,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { CONFIG } from '../core/config-manager.js';
 import { getClientIp } from '../utils/common.js';
+import { PASSWORD } from '../utils/constants.js';
 
 // Token存储到本地文件中
 const TOKEN_STORE_FILE = path.join(process.cwd(), 'configs', 'token-store.json');
@@ -48,10 +50,27 @@ export async function readPasswordFile() {
  */
 export async function validateCredentials(password) {
     const storedPassword = await readPasswordFile();
-    logger.info('[Auth] Validating password, stored password length:', storedPassword ? storedPassword.length : 0, ', input password length:', password ? password.length : 0);
-    const isValid = storedPassword && password === storedPassword;
-    logger.info('[Auth] Password validation result:', isValid);
-    return isValid;
+    if (!storedPassword || !password) return false;
+
+    // 新格式：pbkdf2:salt:hash
+    if (storedPassword.startsWith('pbkdf2:')) {
+        const parts = storedPassword.split(':');
+        if (parts.length !== 3) return false;
+        const [, salt, storedHash] = parts;
+        const inputHash = await new Promise((resolve, reject) =>
+            crypto.pbkdf2(password.trim(), salt, PASSWORD.PBKDF2_ITERATIONS, PASSWORD.PBKDF2_KEYLEN, PASSWORD.PBKDF2_DIGEST, (err, key) =>
+                err ? reject(err) : resolve(key.toString('hex'))
+            )
+        );
+        return crypto.timingSafeEqual(Buffer.from(inputHash, 'hex'), Buffer.from(storedHash, 'hex'));
+    }
+
+    // 旧格式：明文（兼容迁移期，建议通过 UI 重新设置密码以升级为哈希格式）
+    // 使用 timingSafeEqual 防止时序攻击
+    const a = Buffer.from(password.trim());
+    const b = Buffer.from(storedPassword);
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
 }
 
 /**
@@ -119,7 +138,7 @@ async function readTokenStore() {
  */
 async function writeTokenStore(tokenStore) {
     try {
-        await fs.writeFile(TOKEN_STORE_FILE, JSON.stringify(tokenStore, null, 2), 'utf8');
+        await atomicWriteFile(TOKEN_STORE_FILE, JSON.stringify(tokenStore, null, 2), { encoding: 'utf8', mode: 0o600 });
     } catch (error) {
         logger.error('[Token Store] Failed to write token store file:', error);
     }
@@ -264,15 +283,31 @@ export async function cleanupExpiredTokens() {
 
 /**
  * 检查token验证
+ * 支持 Authorization Header 或 URL 参数 token (用于 SSE)
  */
 export async function checkAuth(req) {
-    const authHeader = req.headers.authorization;
+    let token = null;
     
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    // 1. 检查 Authorization header
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+        token = authHeader.substring(7);
+    }
+    
+    // 2. 检查 URL 参数 (用于 EventSource/SSE)
+    if (!token && req.url) {
+        try {
+            const url = new URL(req.url, 'http://localhost');
+            token = url.searchParams.get('token');
+        } catch (e) {
+            // 解析失败忽略
+        }
+    }
+    
+    if (!token) {
         return false;
     }
 
-    const token = authHeader.substring(7);
     const tokenInfo = await verifyToken(token);
     
     return tokenInfo !== null;

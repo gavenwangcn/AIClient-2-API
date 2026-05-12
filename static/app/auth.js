@@ -1,4 +1,5 @@
 // 认证模块 - 处理token管理和API调用封装
+import { t } from './i18n.js';
 /**
  * 认证管理类
  */
@@ -78,6 +79,7 @@ class ApiClient {
     constructor() {
         this.authManager = new AuthManager();
         this.baseURL = window.location.origin;
+        this.inflightGetRequests = new Map();
     }
 
     /**
@@ -122,17 +124,45 @@ class ApiClient {
             // 如果是401错误，重定向到登录页
             if (response.status === 401) {
                 this.handleUnauthorized();
-                throw new Error('未授权访问');
+                throw new Error(t('common.unauthorized'));
             }
 
             const contentType = response.headers.get('content-type');
+            let data;
             if (contentType && contentType.includes('application/json')) {
-                return await response.json();
+                data = await response.json();
             } else {
-                return await response.text();
+                data = await response.text();
             }
+
+            // 如果响应状态码不是 2xx，抛出错误
+            if (!response.ok) {
+                let errorMessage;
+                if (data && typeof data === 'object') {
+                    // 优先使用错误代码进行翻译
+                    const code = (data.error && data.error.messageCode) || data.messageCode;
+                    if (code) {
+                        const translated = t(code);
+                        if (translated !== code) {
+                            errorMessage = translated;
+                        }
+                    }
+                    
+                    // 如果没有翻译，使用原始错误消息
+                    if (!errorMessage) {
+                        errorMessage = (data.error && data.error.message) || data.message;
+                    }
+                }
+
+                if (!errorMessage) {
+                    errorMessage = `${t('common.requestFailed')} (${t('common.status')}: ${response.status})`;
+                }
+                throw new Error(errorMessage);
+            }
+
+            return data;
         } catch (error) {
-            if (error.message === '未授权访问') {
+            if (error.message === t('common.unauthorized')) {
                 // 已经在handleUnauthorized中处理了重定向
                 throw error;
             }
@@ -147,7 +177,19 @@ class ApiClient {
     async get(endpoint, params = {}) {
         const queryString = new URLSearchParams(params).toString();
         const url = queryString ? `${endpoint}?${queryString}` : endpoint;
-        return this.request(url, { method: 'GET' });
+        const requestKey = `GET ${url}`;
+
+        if (this.inflightGetRequests.has(requestKey)) {
+            return this.inflightGetRequests.get(requestKey);
+        }
+
+        const requestPromise = this.request(url, { method: 'GET' })
+            .finally(() => {
+                this.inflightGetRequests.delete(requestKey);
+            });
+
+        this.inflightGetRequests.set(requestKey, requestPromise);
+        return requestPromise;
     }
 
     /**
@@ -205,17 +247,28 @@ class ApiClient {
             // 如果是401错误，重定向到登录页
             if (response.status === 401) {
                 this.handleUnauthorized();
-                throw new Error('未授权访问');
+                throw new Error(t('common.unauthorized'));
             }
 
             const contentType = response.headers.get('content-type');
+            let data;
             if (contentType && contentType.includes('application/json')) {
-                return await response.json();
+                data = await response.json();
             } else {
-                return await response.text();
+                data = await response.text();
             }
+
+            // 如果响应状态码不是 2xx，抛出错误
+            if (!response.ok) {
+                const errorMessage = (data && typeof data === 'object' && data.error && data.error.message) 
+                    || (data && typeof data === 'object' && data.message)
+                    || `${t('common.uploadFailed')} (${t('common.status')}: ${response.status})`;
+                throw new Error(errorMessage);
+            }
+
+            return data;
         } catch (error) {
-            if (error.message === '未授权访问') {
+            if (error.message === t('common.unauthorized')) {
                 // 已经在handleUnauthorized中处理了重定向
                 throw error;
             }

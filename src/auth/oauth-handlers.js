@@ -27,4 +27,6 @@ export {
     // Consensus MCP
     handleConsensusOAuth,
     cancelConsensusMcporterAuth,
+    // Grok Auth
+    batchImportGrokTokensStream
 } from './index.js';

@@ -4,6 +4,7 @@
  */
 
 import { t } from './i18n.js';
+import { apiClient } from './auth.js';
 
 // 模型数据缓存
 let modelsCache = null;
@@ -33,17 +34,7 @@ async function fetchProviderModels() {
     }
     
     try {
-        const response = await fetch('/api/provider-models', {
-            headers: {
-                'Authorization': `Bearer ${localStorage.getItem('authToken') || ''}`
-            }
-        });
-        
-        if (!response.ok) {
-            throw new Error(`HTTP error! status: ${response.status}`);
-        }
-        
-        modelsCache = await response.json();
+        modelsCache = await apiClient.get('/provider-models');
         return modelsCache;
     } catch (error) {
         console.error('[Models Manager] Failed to fetch provider models:', error);
@@ -200,10 +191,23 @@ function getProviderDisplayName(providerType) {
         'openai-qwen-oauth': 'Qwen (OAuth)',
         'openai-iflow': 'iFlow',
         'openai-codex-oauth': 'OpenAI Codex (OAuth)',
-        'consensus-mcp-oauth': 'Consensus MCP'
+        'consensus-mcp-oauth': 'Consensus MCP',
+        'grok-web': 'Grok Web'
     };
 
-    return displayNames[providerType] || providerType;
+    if (displayNames[providerType]) {
+        return displayNames[providerType];
+    }
+
+    // 尝试前缀匹配
+    for (const baseType in displayNames) {
+        if (providerType.startsWith(baseType + '-')) {
+            const suffix = providerType.substring(baseType.length + 1);
+            return `${displayNames[baseType]} (${suffix})`;
+        }
+    }
+
+    return providerType;
 }
 
 /**
@@ -221,13 +225,22 @@ function getProviderIcon(providerType) {
         }
     }
 
-    if (providerType.includes('gemini')) {
-        return 'fas fa-gem';
-    } else if (providerType.includes('claude')) {
-        return 'fas fa-robot';
-    } else if (providerType.includes('openai') || providerType.includes('qwen') || providerType.includes('iflow')) {
-        return 'fas fa-brain';
+    const iconMap = {
+        'gemini': 'fas fa-gem',
+        'claude': 'fas fa-robot',
+        'openai': 'fas fa-brain',
+        'qwen': 'fas fa-brain',
+        'iflow': 'fas fa-brain',
+        'forward': 'fas fa-share-square',
+        'grok': 'fas fa-search'
+    };
+
+    for (const key in iconMap) {
+        if (providerType.includes(key)) {
+            return iconMap[key];
+        }
     }
+    
     return 'fas fa-server';
 }
 

@@ -7,41 +7,40 @@ import { apiClient } from './auth.js';
  * @param {string[]} supportedProviders - 已注册的提供商类型列表
  * @returns {Object[]} 提供商配置对象数组
  */
-function getProviderConfigs(supportedProviders = []) {
+/**
+ * 获取所有基础提供商配置（母版）
+ * @returns {Object[]} 基础提供商配置数组
+ */
+function getBaseProviderConfigs() {
     return [
         { 
             id: 'forward-api', 
             name: 'NewAPI', 
-            icon: 'fa-share-square',
-            visible: supportedProviders.includes('forward-api') 
+            icon: 'fa-share-square'
         },
         { 
             id: 'gemini-cli-oauth', 
             name: t('dashboard.routing.nodeName.gemini'), 
             icon: 'fa-robot',
-            defaultPath: 'configs/gemini/',
-            visible: supportedProviders.includes('gemini-cli-oauth') 
+            defaultPath: 'configs/gemini/'
         },
         { 
             id: 'gemini-antigravity', 
             name: t('dashboard.routing.nodeName.antigravity'), 
             icon: 'fa-rocket',
-            defaultPath: 'configs/antigravity/',
-            visible: supportedProviders.includes('gemini-antigravity') 
+            defaultPath: 'configs/antigravity/'
         },
         { 
             id: 'claude-kiro-oauth', 
             name: t('dashboard.routing.nodeName.kiro'), 
             icon: 'fa-key',
-            defaultPath: 'configs/kiro/',
-            visible: supportedProviders.includes('claude-kiro-oauth') 
+            defaultPath: 'configs/kiro/'
         },
         { 
             id: 'openai-codex-oauth', 
             name: t('dashboard.routing.nodeName.codex'), 
             icon: 'fa-code',
-            defaultPath: 'configs/codex/',
-            visible: supportedProviders.includes('openai-codex-oauth') 
+            defaultPath: 'configs/codex/'
         },
         { 
             id: 'consensus-mcp-oauth', 
@@ -54,41 +53,74 @@ function getProviderConfigs(supportedProviders = []) {
             id: 'openai-qwen-oauth', 
             name: t('dashboard.routing.nodeName.qwen'), 
             icon: 'fa-cloud',
-            defaultPath: 'configs/qwen/',
-            visible: supportedProviders.includes('openai-qwen-oauth') 
+            defaultPath: 'configs/qwen/'
         },
         { 
             id: 'openai-iflow', 
             name: t('dashboard.routing.nodeName.iflow'), 
             icon: 'fa-stream',
-            defaultPath: 'configs/iflow/',
-            visible: supportedProviders.includes('openai-iflow') 
+            defaultPath: 'configs/iflow/'
         },
         { 
-            id: 'grok-custom', 
+            id: 'grok-web', 
             name: t('dashboard.routing.nodeName.grok'), 
-            icon: 'fa-user-secret',
-            visible: supportedProviders.includes('grok-custom') 
+            icon: 'fa-user-secret'
         },
         { 
             id: 'openai-custom', 
             name: t('dashboard.routing.nodeName.openai'), 
-            icon: 'fa-microchip',
-            visible: supportedProviders.includes('openai-custom') 
+            icon: 'fa-microchip'
         },
         { 
             id: 'claude-custom', 
             name: t('dashboard.routing.nodeName.claude'), 
-            icon: 'fa-brain',
-            visible: supportedProviders.includes('claude-custom') 
+            icon: 'fa-brain'
         },
         { 
             id: 'openaiResponses-custom', 
             name: 'OpenAI Responses', 
-            icon: 'fa-reply-all',
-            visible: supportedProviders.includes('openaiResponses-custom') 
+            icon: 'fa-reply-all'
         },
     ];
+}
+
+/**
+ * 获取所有支持的提供商配置列表
+ * @param {string[]} supportedProviders - 已注册的提供商类型列表
+ * @returns {Object[]} 提供商配置对象数组
+ */
+function getProviderConfigs(supportedProviders = []) {
+    const baseConfigs = getBaseProviderConfigs();
+
+    const result = [];
+    const usedIds = new Set();
+
+    // 1. 处理 supportedProviders 中匹配基础配置的类型
+    baseConfigs.forEach(config => {
+        const isSupported = supportedProviders.includes(config.id);
+        result.push({ ...config, visible: isSupported });
+        usedIds.add(config.id);
+    });
+
+    // 2. 处理带有后缀的自定义类型 (例如 openai-custom-test)
+    supportedProviders.forEach(providerId => {
+        if (usedIds.has(providerId)) return;
+
+        // 查找匹配的前缀
+        const baseConfig = baseConfigs.find(bc => providerId.startsWith(bc.id + '-'));
+        if (baseConfig) {
+            const suffix = providerId.substring(baseConfig.id.length + 1);
+            result.push({
+                ...baseConfig,
+                id: providerId,
+                name: `${baseConfig.name} (${suffix})`,
+                visible: true
+            });
+            usedIds.add(providerId);
+        }
+    });
+
+    return result;
 }
 
 /**
@@ -176,6 +208,7 @@ function getFieldLabel(key) {
         'CODEX_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
         'GROK_COOKIE_TOKEN': t('modal.provider.field.ssoToken'),
         'GROK_CF_CLEARANCE': t('modal.provider.field.cfClearance'),
+
         'GROK_USER_AGENT': t('modal.provider.field.userAgent'),
         'GEMINI_BASE_URL': 'Gemini Base URL',
         'KIRO_BASE_URL': t('modal.provider.field.baseUrl'),
@@ -210,6 +243,7 @@ function getFieldLabel(key) {
  * @returns {Array} 字段配置数组
  */
 function getProviderTypeFields(providerType) {
+    // 基础配置字段定义
     const fieldConfigs = {
         'openai-custom': [
             {
@@ -399,7 +433,7 @@ function getProviderTypeFields(providerType) {
                 placeholder: 'consensus'
             }
         ],
-        'grok-custom': [
+        'grok-web': [
             {
                 id: 'GROK_COOKIE_TOKEN',
                 label: t('modal.provider.field.ssoToken'),
@@ -453,7 +487,19 @@ function getProviderTypeFields(providerType) {
         ]
     };
 
-    return fieldConfigs[providerType] || [];
+    // 1. 尝试精确匹配
+    if (fieldConfigs[providerType]) {
+        return fieldConfigs[providerType];
+    }
+
+    // 2. 尝试匹配前缀 (例如 openai-custom-test -> openai-custom)
+    for (const baseType in fieldConfigs) {
+        if (providerType.startsWith(baseType + '-')) {
+            return fieldConfigs[baseType];
+        }
+    }
+
+    return [];
 }
 
 /**
@@ -486,6 +532,81 @@ async function apiRequest(url, options = {}) {
     return apiClient.request(endpoint, options);
 }
 
+/**
+ * 复制文本到剪贴板（带兼容性回退）
+ * @param {string} text - 要复制的文本
+ * @returns {Promise<boolean>} 是否成功
+ */
+async function copyToClipboard(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return true;
+        } catch (err) {
+            console.warn('navigator.clipboard failed, trying fallback:', err);
+        }
+    }
+
+    // Fallback: 使用 textarea 模拟复制
+    try {
+        const textArea = document.createElement('textarea');
+        textArea.value = text;
+        textArea.style.position = 'fixed';
+        textArea.style.left = '-9999px';
+        textArea.style.top = '0';
+        document.body.appendChild(textArea);
+        textArea.focus();
+        textArea.select();
+        const successful = document.execCommand('copy');
+        document.body.removeChild(textArea);
+        return successful;
+    } catch (err) {
+        console.error('Fallback copy failed:', err);
+        return false;
+    }
+}
+
+/**
+ * 只为元素绑定一次事件
+ * @param {HTMLElement|null} element - 需要绑定事件的元素
+ * @param {string} eventName - 事件名称
+ * @param {Function} handler - 事件处理函数
+ * @param {string} key - 绑定标识，避免同一元素重复绑定同一类事件
+ * @returns {boolean} 是否完成了本次绑定
+ */
+function bindOnce(element, eventName, handler, key = eventName) {
+    if (!element) {
+        return false;
+    }
+
+    if (!markOnce(element, key)) {
+        return false;
+    }
+
+    element.addEventListener(eventName, handler);
+    return true;
+}
+
+/**
+ * 为元素记录一次性初始化状态
+ * @param {HTMLElement|null} element - 需要标记的元素
+ * @param {string} key - 标识名称
+ * @returns {boolean} 是否是首次标记
+ */
+function markOnce(element, key) {
+    if (!element) {
+        return false;
+    }
+
+    const boundKey = `bound${key.charAt(0).toUpperCase()}${key.slice(1)}`;
+    if (element.dataset[boundKey]) {
+        return false;
+    }
+
+    element.dataset[boundKey] = 'true';
+    return true;
+}
+
 // 导出所有工具函数
 export {
     formatUptime,
@@ -494,6 +615,10 @@ export {
     getFieldLabel,
     getProviderTypeFields,
     getProviderConfigs,
+    getBaseProviderConfigs,
     getProviderStats,
-    apiRequest
+    apiRequest,
+    copyToClipboard,
+    bindOnce,
+    markOnce
 };

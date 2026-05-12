@@ -2,11 +2,12 @@ import deepmerge from 'deepmerge';
 import logger from '../utils/logger.js';
 import { handleError, getClientIp } from '../utils/common.js';
 import { handleUIApiRequests, serveStaticFiles } from '../services/ui-manager.js';
+import { isUIPath, isUIApiPath } from '../utils/ui-utils.js';
 import { handleAPIRequests } from '../services/api-manager.js';
 import { getApiService, getProviderStatus } from '../services/service-manager.js';
 import { getProviderPoolManager } from '../services/service-manager.js';
-import { MODEL_PROVIDER } from '../utils/common.js';
-import { getRegisteredProviders } from '../providers/adapter.js';
+import { MODEL_PROVIDER } from '../utils/constants.js';
+import { getRegisteredProviders, isRegisteredProvider } from '../providers/adapter.js';
 import { countTokensAnthropic } from '../utils/token-utils.js';
 import { PROMPT_LOG_FILENAME } from '../core/config-manager.js';
 import { getPluginManager } from '../core/plugin-manager.js';
@@ -55,6 +56,7 @@ export function createRequestHandler(config, providerPoolManager) {
         return logger.runWithContext(requestId, async () => {
             // Deep copy the config for each request to allow dynamic modification
             const currentConfig = deepmerge({}, config);
+            currentConfig._monitorRequestId = requestId;
             
             // 计算当前请求的基础 URL
             const protocol = req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
@@ -87,15 +89,43 @@ export function createRequestHandler(config, providerPoolManager) {
                 // 检查是否是插件静态文件
                 const pluginManager = getPluginManager();
                 const isPluginStatic = pluginManager.isPluginStaticPath(path);
-                if (path.startsWith('/static/') || path === '/' || path === '/favicon.ico' || path === '/index.html' || path.startsWith('/app/') || path.startsWith('/components/') || path === '/login.html' || isPluginStatic) {
-                    const served = await serveStaticFiles(path, res);
-                    if (served) return;
+                
+                // 如果 UI 已禁用，拦截所有 UI 相关的静态资源请求
+                const _isUIPath = isUIPath(path);
+                
+                if (!currentConfig.UI_ENABLED) {
+                    if (_isUIPath || isPluginStatic) {
+                        handleError(res, { status: 404, message: 'UI static files are disabled' }, currentConfig.MODEL_PROVIDER, null, req);
+                        return;
+                    }
+                }
+
+                // 尝试处理 UI 相关的请求
+                if (currentConfig.UI_ENABLED) {
+                     // 如果启用了 UI，或者请求的不是 UI 静态资源（可能是 API），则继续
+                     if (_isUIPath || isPluginStatic) {
+                        const pluginStaticOwner = isPluginStatic ? pluginManager.getPluginByStaticPath(path) : null;
+                        if (pluginStaticOwner && !pluginStaticOwner._enabled) {
+                            res.writeHead(503, { 'Content-Type': 'application/json; charset=utf-8' });
+                            res.end(JSON.stringify({
+                                success: false,
+                                error: {
+                                    message: `插件未启用：${pluginStaticOwner.name}`,
+                                    code: 'PLUGIN_DISABLED'
+                                }
+                            }));
+                            return;
+                        }
+                        const served = await serveStaticFiles(path, res);
+                        if (served) return;
+                    }
                 }
 
                 // 执行插件路由
-                const pluginRouteHandled = await pluginManager.executeRoutes(method, path, req, res);
+                const pluginRouteHandled = await pluginManager.executeRoutes(method, path, req, res, currentConfig);
                 if (pluginRouteHandled) return;
 
+                // 处理 UI API 请求（即使 UI_ENABLED 为 false，API 也保持可用）
                 const uiHandled = await handleUIApiRequests(method, path, req, res, currentConfig, providerPoolManager);
                 if (uiHandled) return;
 
@@ -147,7 +177,7 @@ export function createRequestHandler(config, providerPoolManager) {
                         return true;
                     } catch (error) {
                         logger.info(`[Server] req provider_health error: ${error.message}`);
-                        handleError(res, { statusCode: 500, message: `Failed to get providers health: ${error.message}` }, currentConfig.MODEL_PROVIDER);
+                        handleError(res, { status: 500, message: `Failed to get providers health: ${error.message}` }, currentConfig.MODEL_PROVIDER, null, req);
                         return;
                     }
                 }
@@ -157,14 +187,12 @@ export function createRequestHandler(config, providerPoolManager) {
                 // Allow overriding MODEL_PROVIDER via request header
                 const modelProviderHeader = req.headers['model-provider'];
                 if (modelProviderHeader) {
-                    const registeredProviders = getRegisteredProviders();
-                    if (registeredProviders.includes(modelProviderHeader)) {
+                    if (isRegisteredProvider(modelProviderHeader)) {
                         currentConfig.MODEL_PROVIDER = modelProviderHeader;
                         logger.info(`[Config] MODEL_PROVIDER overridden by header to: ${currentConfig.MODEL_PROVIDER}`);
                     } else {
                         logger.warn(`[Config] Provider ${modelProviderHeader} in header is not available.`);
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: { message: `Provider ${modelProviderHeader} is not available.` } }));
+                        handleError(res, { status: 400, message: `Provider ${modelProviderHeader} in header is not available.` }, currentConfig.MODEL_PROVIDER, null, req);
                         return;
                     }
                 }
@@ -174,8 +202,7 @@ export function createRequestHandler(config, providerPoolManager) {
                 
                 if (pathSegments.length > 0) {
                     const firstSegment = pathSegments[0];
-                    const registeredProviders = getRegisteredProviders();
-                    const isValidProvider = registeredProviders.includes(firstSegment);
+                    const isValidProvider = isRegisteredProvider(firstSegment);
                     const isAutoMode = firstSegment === MODEL_PROVIDER.AUTO;
 
                     if (firstSegment && (isValidProvider || isAutoMode)) {
@@ -187,8 +214,7 @@ export function createRequestHandler(config, providerPoolManager) {
                     } else if (firstSegment && Object.values(MODEL_PROVIDER).includes(firstSegment)) {
                         // 如果在 MODEL_PROVIDER 中但没注册适配器，拦截并报错
                         logger.warn(`[Config] Provider ${firstSegment} is recognized but no adapter is registered.`);
-                        res.writeHead(400, { 'Content-Type': 'application/json' });
-                        res.end(JSON.stringify({ error: { message: `Provider ${firstSegment} is not available.` } }));
+                        handleError(res, { status: 400, message: `Provider ${firstSegment} is not available.` }, currentConfig.MODEL_PROVIDER, null, req);
                         return;
                     } else if (firstSegment && !isValidProvider) {
                         logger.info(`[Config] Ignoring invalid MODEL_PROVIDER in path segment: ${firstSegment}`);
@@ -202,9 +228,8 @@ export function createRequestHandler(config, providerPoolManager) {
                     return;
                 }
                 if (!authResult.authorized) {
-                    // 没有认证插件授权，返回 401
-                    res.writeHead(401, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: { message: 'Unauthorized: API key is invalid or missing.' } }));
+                    // 没有认证插件授权，使用 handleError 返回 401
+                    handleError(res, { status: 401, message: 'Unauthorized: API key is invalid or missing.' }, currentConfig.MODEL_PROVIDER, null, req);
                     return;
                 }
                 
@@ -235,7 +260,7 @@ export function createRequestHandler(config, providerPoolManager) {
                         return true;
                     } catch (error) {
                         logger.error(`[Server] count_tokens error: ${error.message}`);
-                        handleError(res, { statusCode: 500, message: `Failed to count tokens: ${error.message}` }, currentConfig.MODEL_PROVIDER);
+                        handleError(res, { status: 500, message: `Failed to count tokens: ${error.message}` }, currentConfig.MODEL_PROVIDER, null, req);
                         return;
                     }
                 }
@@ -261,10 +286,9 @@ export function createRequestHandler(config, providerPoolManager) {
                     if (apiHandled) return;
 
                     // Fallback for unmatched routes
-                    res.writeHead(404, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ error: { message: 'Not Found' } }));
+                    handleError(res, { status: 404, message: 'Not Found' }, currentConfig.MODEL_PROVIDER, null, req);
                 } catch (error) {
-                    handleError(res, error, currentConfig.MODEL_PROVIDER);
+                    handleError(res, error, currentConfig.MODEL_PROVIDER, null, req);
                 }
             } finally {
                 // Clear request context after request is complete

@@ -15,7 +15,7 @@ export const PROVIDER_MAPPINGS = [
     {
         // Kiro OAuth 配置
         dirName: 'kiro',
-        patterns: ['configs/kiro/', '/kiro/'],
+        patterns: ['configs/kiro/', '/kiro/', 'kiro-auth-token'],
         providerType: 'claude-kiro-oauth',
         credPathKey: 'KIRO_OAUTH_CREDS_FILE_PATH',
         defaultCheckModel: 'claude-haiku-4-5',
@@ -26,7 +26,7 @@ export const PROVIDER_MAPPINGS = [
     {
         // Gemini CLI OAuth 配置
         dirName: 'gemini',
-        patterns: ['configs/gemini/', '/gemini/', 'configs/gemini-cli/'],
+        patterns: ['configs/gemini/', '/gemini/', '/.gemini/', 'configs/gemini-cli/'],
         providerType: 'gemini-cli-oauth',
         credPathKey: 'GEMINI_OAUTH_CREDS_FILE_PATH',
         defaultCheckModel: 'gemini-2.5-flash',
@@ -41,6 +41,7 @@ export const PROVIDER_MAPPINGS = [
         providerType: 'openai-qwen-oauth',
         credPathKey: 'QWEN_OAUTH_CREDS_FILE_PATH',
         defaultCheckModel: 'qwen3-coder-plus',
+        defaultCheckHealth: true,
         displayName: 'Qwen OAuth',
         needsProjectId: false,
         urlKeys: ['QWEN_BASE_URL', 'QWEN_OAUTH_BASE_URL']
@@ -48,7 +49,7 @@ export const PROVIDER_MAPPINGS = [
     {
         // Antigravity OAuth 配置
         dirName: 'antigravity',
-        patterns: ['configs/antigravity/', '/antigravity/'],
+        patterns: ['configs/antigravity/', '/antigravity/', '/.antigravity/'],
         providerType: 'gemini-antigravity',
         credPathKey: 'ANTIGRAVITY_OAUTH_CREDS_FILE_PATH',
         defaultCheckModel: 'gemini-2.5-computer-use-preview-10-2025',
@@ -70,7 +71,7 @@ export const PROVIDER_MAPPINGS = [
     {
         // Codex OAuth 配置
         dirName: 'codex',
-        patterns: ['configs/codex/', '/codex/'],
+        patterns: ['configs/codex/', '/codex/', '/.codex/'],
         providerType: 'openai-codex-oauth',
         credPathKey: 'CODEX_OAUTH_CREDS_FILE_PATH',
         defaultCheckModel: 'gpt-5.2-codex',
@@ -90,13 +91,13 @@ export const PROVIDER_MAPPINGS = [
         urlKeys: ['CONSENSUS_MCP_URL', 'CONSENSUS_MCP_SERVER_NAME']
     },
     {
-        // Grok Reverse 配置
+        // Grok Web 配置
         dirName: 'grok',
         patterns: ['configs/grok/', '/grok/'],
-        providerType: 'grok-custom',
+        providerType: 'grok-web',
         credPathKey: 'GROK_COOKIE_TOKEN',
-        defaultCheckModel: 'grok-3',
-        displayName: 'Grok Reverse',
+        defaultCheckModel: 'grok-4.1-mini',
+        displayName: 'Grok Web',
         needsProjectId: false,
         urlKeys: ['GROK_BASE_URL', 'GROK_CF_CLEARANCE', 'GROK_USER_AGENT']
     },
@@ -144,9 +145,14 @@ export const PROVIDER_MAPPINGS = [
 
 /**
  * 生成 UUID
+ * 兼容旧版 Node.js（<14.17.0）：如果 crypto.randomUUID 不存在则使用 Math.random 回退方案
  * @returns {string} UUID 字符串
  */
 export function generateUUID() {
+    if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+        return crypto.randomUUID();
+    }
+    // 回退方案：使用 Math.random 生成标准 UUID v4
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
         const r = Math.random() * 16 | 0;
         const v = c === 'x' ? r : (r & 0x3 | 0x8);
@@ -314,7 +320,8 @@ export function detectProviderFromPath(normalizedPath) {
                     credPathKey: mapping.credPathKey,
                     defaultCheckModel: mapping.defaultCheckModel,
                     displayName: mapping.displayName,
-                    needsProjectId: mapping.needsProjectId
+                    needsProjectId: mapping.needsProjectId,
+                    urlKeys: mapping.urlKeys
                 };
             }
         }
@@ -380,13 +387,13 @@ export async function isValidOAuthCredentials(filePath) {
  * @returns {Object} 新的提供商配置对象
  */
 export function createProviderConfig(options) {
-    const { credPathKey, credPath, defaultCheckModel, needsProjectId, urlKeys } = options;
+    const { credPathKey, credPath, defaultCheckModel, defaultCheckHealth, needsProjectId, urlKeys } = options;
     
     const newProvider = {
         [credPathKey]: credPath,
         uuid: generateUUID(),
         checkModelName: defaultCheckModel,
-        checkHealth: false,
+        checkHealth: defaultCheckHealth ?? false,
         isHealthy: true,
         isDisabled: false,
         lastUsed: null,

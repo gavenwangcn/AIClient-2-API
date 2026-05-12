@@ -15,11 +15,13 @@ import {
     deleteKey,
     updateKeyLimit,
     resetKeyUsage,
+    resetKeyTokenStats,
     toggleKey,
     updateKeyName,
     validateKey,
     incrementUsage,
     getStats,
+    resetAllTokenStats,
     KEY_PREFIX,
     setConfigGetter
 } from './key-manager.js';
@@ -33,6 +35,109 @@ import {
 import logger from '../../utils/logger.js';
 
 import { handlePotluckApiRoutes, handlePotluckUserApiRoutes } from './api-routes.js';
+
+const pendingUsage = new Map();
+
+function toNumber(value) {
+    const num = Number(value);
+    return Number.isFinite(num) ? num : 0;
+}
+
+function normalizeUsageCandidate(candidate) {
+    if (!candidate || typeof candidate !== 'object') {
+        return null;
+    }
+    if (Array.isArray(candidate)) {
+        return candidate.reduce((usage, item) => mergeUsage(usage, normalizeUsageCandidate(item)), {
+            promptTokens: 0,
+            completionTokens: 0,
+            totalTokens: 0,
+            cachedTokens: 0
+        });
+    }
+
+    const usage = candidate.usage || candidate.message?.usage || candidate.usageMetadata || candidate.response?.usage || null;
+    const reasoningTokens = toNumber(
+        candidate.completion_tokens_details?.reasoning_tokens ??
+        candidate.output_tokens_details?.reasoning_tokens ??
+        usage?.completion_tokens_details?.reasoning_tokens ??
+        usage?.output_tokens_details?.reasoning_tokens ??
+        usage?.thoughtsTokenCount
+    );
+    const promptTokens = toNumber(
+        candidate.prompt_tokens ??
+        usage?.prompt_tokens ??
+        usage?.input_tokens ??
+        usage?.promptTokenCount ??
+        usage?.inputTokenCount
+    );
+    const completionTokens = toNumber(
+        candidate.completion_tokens ??
+        usage?.completion_tokens ??
+        usage?.output_tokens ??
+        usage?.candidatesTokenCount ??
+        usage?.outputTokenCount
+    ) + reasoningTokens;
+    const totalTokens = toNumber(
+        candidate.total_tokens ??
+        usage?.total_tokens ??
+        usage?.totalTokenCount
+    );
+
+    const cachedTokens = toNumber(
+        candidate.cached_tokens ??
+        usage?.cached_tokens ??
+        candidate.prompt_tokens_details?.cached_tokens ??
+        candidate.input_tokens_details?.cached_tokens ??
+        usage?.prompt_tokens_details?.cached_tokens ??
+        usage?.input_tokens_details?.cached_tokens ??
+        usage?.cache_read_input_tokens ??
+        usage?.cachedContentTokenCount
+    );
+
+    return {
+        promptTokens,
+        completionTokens,
+        totalTokens: totalTokens || (promptTokens + completionTokens),
+        cachedTokens
+    };
+}
+
+function mergeUsage(baseUsage, nextUsage) {
+    if (!nextUsage) return baseUsage;
+    return {
+        promptTokens: Math.max(baseUsage.promptTokens, nextUsage.promptTokens),
+        completionTokens: Math.max(baseUsage.completionTokens, nextUsage.completionTokens),
+        totalTokens: Math.max(baseUsage.totalTokens, nextUsage.totalTokens),
+        cachedTokens: Math.max(baseUsage.cachedTokens || 0, nextUsage.cachedTokens || 0)
+    };
+}
+
+function extractUsage(...candidates) {
+    return candidates.reduce((usage, candidate) => mergeUsage(usage, normalizeUsageCandidate(candidate)), {
+        promptTokens: 0,
+        completionTokens: 0,
+        totalTokens: 0,
+        cachedTokens: 0
+    });
+}
+
+function getTrackedRequestIds(hookContext = {}) {
+    return [...new Set([
+        hookContext._monitorRequestId
+    ].filter(Boolean))];
+}
+
+function getPendingUsageForHookContext(hookContext = {}) {
+    for (const requestId of getTrackedRequestIds(hookContext)) {
+        const usage = pendingUsage.get(requestId);
+        if (usage) {
+            return usage;
+        }
+    }
+
+    return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+}
 
 /**
  * 插件定义
@@ -146,23 +251,50 @@ const apiPotluckPlugin = {
      * 钩子函数
      */
     hooks: {
+        async onUnaryResponse({ requestId, nativeResponse, clientResponse }) {
+            if (!requestId) return;
+            pendingUsage.set(requestId, mergeUsage(
+                pendingUsage.get(requestId) || { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+                extractUsage(nativeResponse, clientResponse)
+            ));
+        },
+
+        async onStreamChunk({ requestId, nativeChunk, chunkToSend }) {
+            if (!requestId) return;
+            pendingUsage.set(requestId, mergeUsage(
+                pendingUsage.get(requestId) || { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+                extractUsage(nativeChunk, chunkToSend)
+            ));
+        },
+
         /**
          * 内容生成后钩子 - 记录用量
          * @param {Object} hookContext - 钩子上下文，包含请求和模型信息
          */
         async onContentGenerated(hookContext) {
+            const trackedRequestIds = getTrackedRequestIds(hookContext);
+
             if (hookContext.potluckApiKey) {
                 try {
-                    // 传入提供商和模型信息
+                    const usage = getPendingUsageForHookContext(hookContext);
+
+                    // 传入提供商和模型信息，以及请求 ID 用于防重
                     await incrementUsage(
                         hookContext.potluckApiKey, 
                         hookContext.toProvider, 
-                        hookContext.model
+                        hookContext.model,
+                        usage,
+                        trackedRequestIds[0] || null
                     );
+
                 } catch (e) {
                     // 静默失败，不影响主流程
                     logger.error('[API Potluck Plugin] Failed to record usage:', e.message);
                 }
+            }
+
+            for (const requestId of trackedRequestIds) {
+                pendingUsage.delete(requestId);
             }
         }
 
@@ -176,11 +308,13 @@ const apiPotluckPlugin = {
         deleteKey,
         updateKeyLimit,
         resetKeyUsage,
+        resetKeyTokenStats,
         toggleKey,
         updateKeyName,
         validateKey,
         incrementUsage,
         getStats,
+        resetAllTokenStats,
         KEY_PREFIX,
         extractPotluckKey,
         isPotluckRequest
@@ -197,11 +331,13 @@ export {
     deleteKey,
     updateKeyLimit,
     resetKeyUsage,
+    resetKeyTokenStats,
     toggleKey,
     updateKeyName,
     validateKey,
     incrementUsage,
     getStats,
+    resetAllTokenStats,
     KEY_PREFIX,
     extractPotluckKey,
     isPotluckRequest

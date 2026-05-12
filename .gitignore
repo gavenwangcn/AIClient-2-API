@@ -1,9 +1,11 @@
 node_modules
+logs/
 .serena/
 .claude/
 CLAUDE.md
 config.json
 provider_pools.json
+custom_models.json
 plugins.json
 fetch_system_prompt.txt
 input_system_prompt.txt
@@ -13,8 +15,8 @@ usage-cache.json
 *-auth-token.json
 api-potluck-keys.json
 api-potluck-data.json
-# Codex credentials
-configs/codex/
+model-usage-stats.json
+AGENTS.md
 
 # mcporter OAuth vault（docker-compose 挂载目录，含 credentials.json）
 docker/mcporter-data/

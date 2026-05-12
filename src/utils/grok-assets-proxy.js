@@ -51,12 +51,13 @@ export async function handleGrokAssetsProxy(req, res, config, providerPoolManage
             finalTargetUrl = `https://assets.grok.com${targetUrl.startsWith('/') ? '' : '/'}${targetUrl}`;
         }
 
-        // 验证域名安全，只允许代理 assets.grok.com
+        // 验证域名安全，允许代理 Grok 相关域名
         try {
             const parsedTarget = new URL(finalTargetUrl);
-            if (parsedTarget.hostname !== 'assets.grok.com') {
+            const allowedHostnames = ['assets.grok.com', 'imagine-public.x.ai', 'grok.com'];
+            if (!allowedHostnames.includes(parsedTarget.hostname)) {
                 res.writeHead(403, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ error: 'Forbidden: Only assets.grok.com is allowed' }));
+                res.end(JSON.stringify({ error: `Forbidden: Only ${allowedHostnames.join(', ')} are allowed` }));
                 return;
             }
         } catch (e) {
@@ -82,7 +83,7 @@ export async function handleGrokAssetsProxy(req, res, config, providerPoolManage
         };
 
         // 配置代理
-        configureAxiosProxy(axiosConfig, config, MODEL_PROVIDER.GROK_CUSTOM);
+        configureAxiosProxy(axiosConfig, config, MODEL_PROVIDER.GROK_WEB);
 
         logger.debug(`[Grok Proxy] Proxying request to: ${finalTargetUrl}`);
 
