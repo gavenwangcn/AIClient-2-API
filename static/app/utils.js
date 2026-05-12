@@ -46,8 +46,7 @@ function getBaseProviderConfigs() {
             id: 'consensus-mcp-oauth', 
             name: 'Consensus MCP', 
             icon: 'fa-book',
-            defaultPath: 'configs/consensus/',
-            visible: supportedProviders.includes('consensus-mcp-oauth') 
+            defaultPath: 'configs/consensus/'
         },
         { 
             id: 'openai-qwen-oauth', 
