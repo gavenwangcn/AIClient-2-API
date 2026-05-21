@@ -499,8 +499,8 @@ function renderRoutingExamples(providerConfigs) {
 
     // 默认模型映射 (用于 curl 示例)
     const modelMap = {
-        'gemini-cli-oauth': 'gemini-3-flash-preview',
-        'gemini-antigravity': 'gemini-3-flash-preview',
+        'gemini-cli-oauth': 'gemini-3.5-flash',
+        'gemini-antigravity': 'gemini-3.5-flash-medium',
         'claude-custom': 'claude-sonnet-4-6',
         'claude-kiro-oauth': 'claude-sonnet-4-6',
         'openai-custom': 'gpt-4o',

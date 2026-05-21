@@ -72,7 +72,7 @@ function isImageModel(modelName) {
 function modelSupportsThinking(modelName) {
     if (!modelName) return false;
     const name = modelName.toLowerCase();
-    // 支持 thinking 的模型：gemini-3*, gemini-2.5-*, claude-*-thinking
+    // 支持 thinking 的模型：gemini-3* / gemini-3.5*, gemini-2.5-*, claude-*-thinking
     return name.startsWith('gemini-3') ||
            name.startsWith('gemini-2.5-') ||
            name.includes('-thinking');
@@ -1378,8 +1378,8 @@ export class AntigravityApiService {
 
         let selectedModel = model;
         if (!this.availableModels.includes(model)) {
-            logger.warn(`[Antigravity] Model '${model}' not found. Using default model: 'gemini-3-flash'`);
-            selectedModel = 'gemini-3-flash';
+            logger.warn(`[Antigravity] Model '${model}' not found. Using default model: 'gemini-3.5-flash-medium'`);
+            selectedModel = 'gemini-3.5-flash-medium';
         }
 
         // 移除 gemini- 前缀以获取实际模型名称（针对 claude 模型）
@@ -1457,8 +1457,8 @@ export class AntigravityApiService {
 
         let selectedModel = model;
         if (!this.availableModels.includes(model)) {
-            logger.warn(`[Antigravity] Model '${model}' not found. Using default model: 'gemini-3-flash'`);
-            selectedModel = 'gemini-3-flash';
+            logger.warn(`[Antigravity] Model '${model}' not found. Using default model: 'gemini-3.5-flash-medium'`);
+            selectedModel = 'gemini-3.5-flash-medium';
         }
 
         // 移除 gemini- 前缀以获取实际模型名称（针对 claude 模型）

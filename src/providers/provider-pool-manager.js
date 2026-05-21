@@ -48,8 +48,8 @@ export class ProviderPoolManager {
     // 默认健康检查模型配置
     // 键名必须与 MODEL_PROVIDER 常量值一致
     static DEFAULT_HEALTH_CHECK_MODELS = {
-        'gemini-cli-oauth': 'gemini-2.5-flash',
-        'gemini-antigravity': 'gemini-2.5-flash',
+        'gemini-cli-oauth': 'gemini-3.5-flash',
+        'gemini-antigravity': 'gemini-3.5-flash-medium',
         'openai-custom': 'gpt-4o-mini',
         'claude-custom': 'claude-3-7-sonnet-20250219',
         'claude-kiro-oauth': 'claude-haiku-4-5',
