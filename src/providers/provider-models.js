@@ -49,6 +49,7 @@ export const PROVIDER_MODELS = {
         'gemini-3-pro-preview',
     ],
     'gemini-antigravity': [
+        'gemini-3.5-flash',
         'gemini-3.5-flash-high',
         'gemini-3.5-flash-medium',
         'gemini-3.1-pro-high',
