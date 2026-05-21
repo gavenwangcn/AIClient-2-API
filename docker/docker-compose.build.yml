@@ -19,6 +19,7 @@ services:
       - ../logs:/app/logs
       # mcporter OAuth 持久化：Linux 下 vault 为 $HOME/.mcporter/credentials.json（含 access_token / refresh_token）
       - ../mcporter-data:/app/.mcporter
+      - ../plugins:/app/src/plugins-user
     environment:
       - ARGS=
       # 与 Dockerfile 一致，使 mcporter 将 ~/.mcporter 落在 /app/.mcporter 并随卷持久化

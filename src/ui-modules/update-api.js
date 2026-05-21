@@ -434,6 +434,11 @@ async function performTarballUpdate(localVersion, latestTag) {
     const tempDir = path.join(appDir, '.update_temp');
     const tarballPath = path.join(tempDir, 'update.tar.gz');
     
+    // 在 try 块外部声明变量，确保 catch 块可以访问并进行灾难恢复
+    const pluginsUserPath = path.join(appDir, 'src', 'plugins-user');
+    const pluginsUserBackupPath = path.join(tempDir, 'plugins-user_backup');
+    let hasPluginsUserBackup = false;
+    
     logger.info(`[Update] Starting tarball update to ${latestTag}...`);
     
     try {
@@ -499,6 +504,13 @@ async function performTarballUpdate(localVersion, latestTag) {
             ? readFileSync(path.join(appDir, 'package.json'), 'utf-8')
             : null;
         
+        // 备份 src/plugins-user 目录（如果存在）
+        if (existsSync(pluginsUserPath)) {
+            logger.info(`[Update] Backing up plugins-user from ${pluginsUserPath} to ${pluginsUserBackupPath}...`);
+            await fs.rename(pluginsUserPath, pluginsUserBackupPath);
+            hasPluginsUserBackup = true;
+        }
+        
         // 5.5 在解压前删除 src/ 和 static/ 目录，确保旧代码被完全清除
         const dirsToClean = ['src', 'static'];
         for (const dirName of dirsToClean) {
@@ -516,7 +528,8 @@ async function performTarballUpdate(localVersion, latestTag) {
             'node_modules',      // 依赖目录
             '.update_temp',      // 临时更新目录
             'logs',              // 日志目录
-            'tls-sidecar'        // TLS Sidecar 目录
+            'tls-sidecar',        // TLS Sidecar 目录
+            'plugins-user'            // 根目录下的插件目录 (保持向后兼容)
         ];
         
         // 7. 复制新文件到应用目录
@@ -546,6 +559,19 @@ async function performTarballUpdate(localVersion, latestTag) {
             // 复制新文件/目录
             await copyRecursive(srcItemPath, destItemPath);
             logger.info(`[Update] Copied: ${item}`);
+        }
+        
+        // 7.5 恢复备份的 plugins-user 目录
+        if (hasPluginsUserBackup) {
+            const targetPluginsUserPath = path.join(appDir, 'src', 'plugins-user');
+            logger.info(`[Update] Restoring plugins-user to ${targetPluginsUserPath}...`);
+            if (existsSync(targetPluginsUserPath)) {
+                await fs.rm(targetPluginsUserPath, { recursive: true, force: true });
+            }
+            // 确保 src 目录存在（正常情况下已被拷贝出来，但以防万一）
+            await fs.mkdir(path.dirname(targetPluginsUserPath), { recursive: true });
+            await fs.rename(pluginsUserBackupPath, targetPluginsUserPath);
+            logger.info(`[Update] plugins-user restored successfully`);
         }
         
         // 8. 检查是否需要更新依赖
@@ -586,6 +612,23 @@ async function performTarballUpdate(localVersion, latestTag) {
         };
         
     } catch (error) {
+        // 灾难恢复：如果备份了 plugins-user 且升级失败，尝试将其移回原位
+        try {
+            if (hasPluginsUserBackup && existsSync(pluginsUserBackupPath)) {
+                const targetPluginsUserPath = path.join(appDir, 'src', 'plugins-user');
+                logger.info(`[Update] Update failed. Restoring plugins-user to original location for disaster recovery...`);
+                // 确保目标父目录 src 存在
+                await fs.mkdir(path.dirname(targetPluginsUserPath), { recursive: true });
+                if (existsSync(targetPluginsUserPath)) {
+                    await fs.rm(targetPluginsUserPath, { recursive: true, force: true });
+                }
+                await fs.rename(pluginsUserBackupPath, targetPluginsUserPath);
+                logger.info(`[Update] Disaster recovery: plugins-user restored successfully`);
+            }
+        } catch (restoreError) {
+            logger.error('[Update] Disaster recovery failed to restore plugins-user:', restoreError.message);
+        }
+
         // 清理临时目录
         try {
             if (existsSync(tempDir)) {

@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { isUIApiPath } from '../utils/ui-utils.js';
+import { getPluginManager } from '../core/plugin-manager.js';
 
 // Import UI modules
 import * as auth from '../ui-modules/auth.js';
@@ -22,11 +23,24 @@ export { broadcastEvent, initializeUIManagement, handleUploadOAuthCredentials, u
 
 /**
  * Serve static files for the UI
- * @param {string} path - The request path
+ * @param {string} pathParam - The request path
  * @param {http.ServerResponse} res - The HTTP response object
  */
 export async function serveStaticFiles(pathParam, res) {
-    const filePath = path.join(process.cwd(), 'static', pathParam === '/' || pathParam === '/index.html' ? 'index.html' : pathParam.replace('/static/', ''));
+    // 1. 尝试从系统 static 目录服务
+    let filePath = path.join(process.cwd(), 'static', pathParam === '/' || pathParam === '/index.html' ? 'index.html' : pathParam.replace('/static/', ''));
+
+    if (!existsSync(filePath)) {
+        // 2. 尝试从插件目录服务
+        const pluginManager = getPluginManager();
+        const plugin = pluginManager.getPluginByStaticPath(pathParam);
+        if (plugin && plugin._baseDir) {
+            // 假设静态文件名就是路径的最后一部分，或者插件内部有映射
+            // 这里我们简单处理：如果路径匹配，就在插件目录下寻找该文件
+            const fileName = pathParam.split('/').pop();
+            filePath = path.join(plugin._baseDir, fileName);
+        }
+    }
 
     if (existsSync(filePath)) {
         const ext = path.extname(filePath);
@@ -36,6 +50,8 @@ export async function serveStaticFiles(pathParam, res) {
             '.js': 'application/javascript',
             '.png': 'image/png',
             '.jpg': 'image/jpeg',
+            '.svg': 'image/svg+xml',
+            '.json': 'application/json',
             '.ico': 'image/x-icon'
         }[ext] || 'text/plain';
 
@@ -331,6 +347,14 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await usageApi.handleGetProviderUsage(req, res, currentConfig, providerPoolManager, providerType);
     }
 
+    // Get usage limits for a specific provider instance
+    const usageInstanceMatch = pathParam.match(/^\/api\/usage\/([^\/]+)\/([^\/]+)$/);
+    if (method === 'GET' && usageInstanceMatch) {
+        const providerType = decodeURIComponent(usageInstanceMatch[1]);
+        const providerUuid = decodeURIComponent(usageInstanceMatch[2]);
+        return await usageApi.handleGetSingleInstanceUsage(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
     // Check for updates - compare local VERSION with latest git tag
     if (method === 'GET' && pathParam === '/api/check-update') {
         return await updateApi.handleCheckUpdate(req, res);
@@ -413,6 +437,21 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
     // Get plugins list
     if (method === 'GET' && pathParam === '/api/plugins') {
         return await pluginApi.handleGetPlugins(req, res);
+    }
+
+    // Get market plugins
+    if (method === 'GET' && pathParam === '/api/plugins/market') {
+        return await pluginApi.handleGetMarketPlugins(req, res);
+    }
+
+    // Install plugin
+    if (method === 'POST' && pathParam === '/api/plugins/install') {
+        return await pluginApi.handleInstallPlugin(req, res);
+    }
+
+    // Upload plugin
+    if (method === 'POST' && pathParam === '/api/plugins/upload') {
+        return await pluginApi.handleUploadPlugin(req, res);
     }
 
     // Toggle plugin status
