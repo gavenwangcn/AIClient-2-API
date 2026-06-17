@@ -596,6 +596,7 @@ export async function getProviderStatus(config, options = {}) {
     // identify 字段映射表
     const identifyFieldMap = {
         'openai-custom': 'OPENAI_BASE_URL',
+        'atlascloud': 'OPENAI_BASE_URL',
         'openaiResponses-custom': 'OPENAI_BASE_URL',
         'gemini-cli-oauth': 'GEMINI_OAUTH_CREDS_FILE_PATH',
         'claude-custom': 'CLAUDE_BASE_URL',
@@ -605,6 +606,7 @@ export async function getProviderStatus(config, options = {}) {
         'openai-iflow': 'IFLOW_TOKEN_FILE_PATH',
         'forward-api': 'FORWARD_BASE_URL',
         'grok-web': 'GROK_COOKIE_TOKEN',
+        'grok-cli-oauth': 'GROK_CLI_OAUTH_CREDS_FILE_PATH',
         'openai-codex-oauth': 'CODEX_OAUTH_CREDS_FILE_PATH',
         'consensus-mcp-oauth': 'CONSENSUS_MCPORTER_CONFIG_PATH'
     };
@@ -639,11 +641,15 @@ export async function getProviderStatus(config, options = {}) {
             .map(item => {
                 const slim = {};
                 for (const f of slimFields) {
-                    slim[f] = item.hasOwnProperty(f) ? item[f] : null;
+                    let val = item.hasOwnProperty(f) ? item[f] : null;
+                    if (f === 'uuid' && typeof val === 'string' && val.length > 8) {
+                        val = val.substring(0, 8) + '...' + val.substring(val.length - 4);
+                    }
+                    slim[f] = val;
                 }
                 // identify 字段
                 if (identifyField && item.hasOwnProperty(identifyField)) {
-                    let tmpCustomName = item.customName ? `${item.customName}` : (item.uuid || 'NoUUID');
+                    let tmpCustomName = item.customName ? `${item.customName}` : (slim.uuid || 'NoUUID');
                     let identifyStr = `${tmpCustomName}::${key}`;
                     slim.identify = identifyStr;
                 } else {

@@ -60,14 +60,37 @@
   </tr>
   <tr>
     <td width="25%" align="center" valign="middle">
+      <a href="https://apikey.fun/register?aff=AIClient2API">
+        <img src="static/apikey.fun.png" alt="APIKEY.FUN Sponsor" width="180">
+      </a>
+    </td>
+    <td width="75%" align="left" valign="middle">
+      APIKEY.FUN による本プロジェクトへのスポンサーに感謝します！APIKEY.FUN はプロフェッショナルな企業向け AI リレーサービスであり、企業や個人開発者に安定、効率的、低コストな AI モデル API アクセスサービスを提供することに尽力しています。Claude、OpenAI、Gemini などの主要な人気モデルをサポートしており、価格は公式価格のわずか 7% からです。本プロジェクトの<a href="https://apikey.fun/register?aff=AIClient2API">専用リンク</a>から登録すると、永続的なチャージに対して最大 <strong>5% オフ（95折）</strong> の特別割引を受けることができます。
+    </td>
+  </tr>
+  <tr>
+    <td width="25%" align="center" valign="middle">
       <a href="https://visioncoder.com">
         <img src="static/visioncoder.png" alt="VisionCoder Sponsor" width="180">
       </a>
     </td>
     <td width="75%" align="left" valign="middle">
-      VisionCoder による本プロジェクトへのスポンサーに感謝します！VisionCoder 開発プラットフォームは信頼性が高く効率的な API 中継サービスプロバイダーであり、Claude Code、Codex、Gemini などの主要な AI モデルへのアクセスを提供しています。開発者やチームが AI 機能をより簡単に統合し、生産性を向上させるのを支援します。VisionCoder は本ソフトウェアのユーザー向けに期間限定の <a href="https://visioncoder.com">Token Plan</a> 特典を提供しています：<strong>1ヶ月の購入で1ヶ月分を無料で進呈</strong>。
+      Thanks to VisionCoder for supporting this project. <a href="https://visioncoder.com">VisionCoder Developer Platform</a> is a reliable and efficient API relay service provider, offering access to mainstream AI models such as Claude Code, Codex, and Gemini. It helps developers and teams integrate AI capabilities more easily and improve productivity. Additionally, VisionCoder now offers retail channels for Claude Max 200 and GPT Pro 200 premium accounts, providing users with instant access to top-tier AI computing power and features.
     </td>
   </tr>
+  <!--
+  <tr>
+    <td width="25%" align="center" valign="middle">
+      <a href="https://www.atlascloud.ai/console/coding-plan">
+        <img src="static/atlascloud.png" alt="Atlas Cloud Sponsor" width="180">
+      </a>
+    </td>
+    <td width="75%" align="left" valign="middle">
+      Atlas Cloud による本プロジェクトへのスポンサーに感謝します！Atlas Cloud は、開発者が動画生成、画像生成、および LLM API にアクセスするための单二の AI API を提供する全モーダル AI 推論プラットフォームです。複数のベンダーの統合を管理する代わりに、一度接続するだけですべてのモダリティにわたる 300 以上の厳選されたモデルに統合アクセスできます。よりリーズナブルな API アクセスのために、Atlas Cloud の新しい<a href="https://www.atlascloud.ai/console/coding-plan">コーディングプランプロモーション (coding plan)</a>をぜひチェックしてください。
+    </td>
+  </tr>
+  -->
+  <!--
   <tr>
     <td width="25%" align="center" valign="middle">
       <a href="https://www.aicodemirror.com/register?invitecode=5BUE62">
@@ -75,9 +98,10 @@
       </a>
     </td>
     <td width="75%" align="left" valign="middle">
-      AICodeMirror の本プロジェクトへのスポンサーシップに感謝します！AICodeMirror は、Claude Code / Codex / Gemini CLI 向けに公式の高安定性リレーサービスを提供しており、企業レベルの同時実行性、迅速な請求書発行、24時間365日の専用技術サポートを備えています。Claude Code / Codex / Gemini の公式チャンネルを、元の価格の 38% / 2% / 9% で利用でき、チャージ時にはさらなる割引もあります！AICodeMirror は AIClient2API ユーザーに特別な特典を提供しています：<a href="https://www.aicodemirror.com/register?invitecode=5BUE62">このリンクから登録</a>すると、初回チャージが <strong>20% オフ</strong>になり、法人のお客様は最大 25% オフになります！
+      AICodeMirror の本プロジェクトへのスポンサーシップに感謝します！AICodeMirror は、Claude Code / Codex / Gemini CLI 向けに公式の高安定性リレーサービスを提供しており、企業レベルの同時実行性、迅速な請求書発行、24時間365日の専用技术サポートを備えています。Claude Code / Codex / Gemini の公式チャンネルを、元の価格の 38% / 2% / 9% で利用でき、チャージ時にはさらなる割引もあります！AICodeMirror は AIClient2API ユーザーに特別な特典を提供しています：<a href="https://www.aicodemirror.com/register?invitecode=5BUE62">このリンクから登録</a>すると、初回チャージが <strong>20% オフ</strong>になり、法人のお客様は最大 25% オフになります！
     </td>
   </tr>
+  -->
 
 <!--
   <tr>
@@ -130,6 +154,7 @@
 > <details>
 > <summary>クリックして詳細なバージョン履歴を展開</summary>
 > 
+> - **2026.06.03** - Grok Build（Grok CLI）サポートを追加：`grok-cli-oauth` の xAI OAuth / Responses API 呼び出しフローに対応し、Grok Build テキストモデル、マルチプロトコル変換、組み込みツール（Web検索、X検索、コードインタープリター、コレクション/添付ファイル検索）、画像/動画生成モデルをサポート。
 > - **2026.05.04 (v3.0.0)** - **マイルストーンアップデート：高度な AI 統合と自己発見アーキテクチャ**。自動化された Skill ガイドとリモート `/api/help`、`/api/example` エンドポイントを追加し、AI 代理が 50 以上の全 API エンドポイントをシームレスに理解・操作できるようになりました。CLI と REST API の出力結果を完全に統一し、構造化 JSON サポートを強化しました。
 > - **2026.04.29** - OpenAI 標準の画像生成 (`/v1/images/generations`) および画像編集 (`/v1/images/edits`) インターフェースを完全にサポート。OpenAI 形式のリクエストを各モデルのネイティブ画像生成プロトコルに自動変換し、プロバイダープールのポーリングや自动リトライメカニズムに完全対応。マルチモーダル制作の安定性を大幅に向上。
 > - **2026.03.02** - Grokプロトコルサポートを追加：Cookie/SSO方式でxAI Grokシリーズモデル（Grok）へのアクセスに対応し、マルチモーダル入力、画像/動画生成、自動トークンリフレッシュ、ストリーミング出力をサポート
@@ -222,12 +247,12 @@ AIClient2APIを使い始める最も推奨される方法は、自動起動ス�
 #### 🐳 Docker クイックスタート (推奨)
 
 ```bash
-docker run -d -p 3000:3000 -p 8085-8086:8085-8086 -p 1455:1455 -p 19876-19880:19876-19880 --restart=always -v "指定パス/configs:/app/configs" -v "指定パス/plugins:/app/src/plugins-user" --name aiclient2api justlikemaki/aiclient-2-api
+docker run -d -p 3000:3000 -p 8085-8086:8085-8086 -p 1455:1455 -p 56121:56121 -p 19876-19880:19876-19880 --restart=always -v "指定パス/configs:/app/configs" -v "指定パス/plugins:/app/src/plugins-user" --name aiclient2api justlikemaki/aiclient-2-api
 ```
 
 **パラメータ説明**：
 - `-d`：バックグラウンドでコンテナを実行
-- `-p 3000:3000 ...`：ポートマッピング。3000はWeb UI用、その他はOAuthコールバック用（Gemini: 8085, Antigravity: 8086, Codex: 1455, Kiro: 19876-19880）
+- `-p 3000:3000 ...`：ポートマッピング。3000はWeb UI用、その他はOAuthコールバック用（Gemini: 8085, Antigravity: 8086, Codex: 1455, Grok CLI: 56121, Kiro: 19876-19880）
 - `--restart=always`：コンテナ自動再起動ポリシー
 - `-v "指定パス/configs:/app/configs"`：設定ディレクトリをマウント（「指定パス」を実際のパスに置き換えてください、例：`/home/user/aiclient2api`）
 - `-v "指定パス/plugins:/app/src/plugins-user"`：ユーザープラグインディレクトリをマウント
@@ -338,7 +363,7 @@ docker compose up -d
 
 #### 最新モデルサポート
 以下の最新大規模モデルをシームレスにサポート、Web UIまたは[`config.json`](./configs/config.json)で対応するエンドポイントを設定するだけで使用可能：
-*   **Grok** - xAIのフラッグシップモデル。Grok Cookie/SSO経由でサポートされ、思考モデル、画像生成、動画生成に対応
+*   **Grok / Grok Build** - xAIのフラッグシップモデル。Grok Cookie/SSOおよびGrok CLI OAuth経由でサポートされ、思考モデル、Grok Build、組み込みツール、画像生成、動画生成に対応
 *   **Claude Opus** - Anthropic史上最強モデル、Kiro、Antigravity経由でサポート
 *   **Gemini Pro** - Google次世代アーキテクチャプレビュー版、Gemini、Antigravity経由でサポート
 *   **Kimi / MiniMax** - 国内トップフラッグシップモデルの同期サポート、カスタムOpenAI、Claude経由でサポート
@@ -421,6 +446,12 @@ curl http://localhost:3000/claude-kiro-oauth/v1/chat/completions \
 3. **自動保存**：認証成功後、システムがCodexのOAuth認証情報ファイルを自動保存
 4. **コールバックポート**：OAuthコールバックポート `1455` が占有されていないことを確認
 
+#### Grok CLI OAuth設定
+1. **認証の生成**：Web UIの「プロバイダープール」または「設定管理」ページで、Grok CLIの「認証生成」ボタンをクリック
+2. **ブラウザログイン**：システムがxAI認証ページを開き、OAuthログインを完了
+3. **自動保存**：認証成功後、システムがGrok CLI OAuth認証情報ファイルを `configs/grok-cli/` に自動保存
+4. **コールバックポート**：OAuthコールバックポート `56121` が占有されていないことを確認
+
 #### Grok Cookie/SSO 設定
 1. **SSOトークンの取得**: [Grok公式サイト](https://grok.com/)にログインし、ブラウザの開発者ツールの Application -> Cookies から `sso` の値をコピーします。
 2. **設定の入力**: Web UIの「設定管理」ページ、または設定ファイルを直接編集して、トークンを `GROK_COOKIE_TOKEN` に入力します。
@@ -451,6 +482,7 @@ curl http://localhost:3000/claude-kiro-oauth/v1/chat/completions \
 | **Kiro** | `~/.aws/sso/cache/kiro-auth-token.json` | Kiro認証トークン |
 | **Antigravity** | `~/.antigravity/oauth_creds.json` | Antigravity OAuth認証情報 (Claude Opus サポート) |
 | **Codex** | `~/.codex/oauth_creds.json` | Codex OAuth認証情報 |
+| **Grok CLI** | `configs/grok-cli/..._xai-..._oauth_creds.json` | Grok CLI OAuth認証情報 |
 
 > **説明**：`~`はユーザーホームディレクトリを表します（Windows: `C:\Users\ユーザー名`、Linux/macOS: `/home/ユーザー名`または`/Users/ユーザー名`）
 
@@ -628,7 +660,7 @@ Grok などの TLS 指紋（JA3/JA4）を厳密に検証するサービスに対
 
 **解決策**：
 - **ネットワーク接続を確認**：Google、アリババクラウドなどのサービスに正常にアクセスできることを確認
-- **ポート占有を確認**：OAuthコールバックには特定のポートが必要です（Gemini: 8085, Antigravity: 8086, Codex: 1455, Kiro: 19876-19880）、これらのポートが占有されていないことを確認
+- **ポート占有を確認**：OAuthコールバックには特定のポートが必要です（Gemini: 8085, Antigravity: 8086, Codex: 1455, Grok CLI: 56121, Kiro: 19876-19880）、これらのポートが占有されていないことを確認
 - **ブラウザキャッシュをクリア**：シークレットモードを使用するか、ブラウザキャッシュをクリアして再試行
 - **ファイアウォール設定を確認**：ファイアウォールがローカルコールバックポートへのアクセスを許可していることを確認
 - **Dockerユーザー**：すべてのOAuthコールバックポートが正しくマッピングされていることを確認

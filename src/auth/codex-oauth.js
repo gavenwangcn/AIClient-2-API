@@ -28,6 +28,16 @@ const CODEX_OAUTH_CONFIG = {
  */
 const activeServers = new Map();
 
+function sanitizeCodexCredentialFilenamePart(value) {
+    const sanitized = String(value || 'default')
+        .trim()
+        .replace(/[^a-zA-Z0-9@._+-]/g, '_')
+        .replace(/_+/g, '_')
+        .slice(0, 120);
+
+    return sanitized || 'default';
+}
+
 /**
  * 关闭指定端口的活动服务器
  */
@@ -493,6 +503,7 @@ class CodexAuth {
      */
     async saveCredentials(creds) {
         const email = creds.email || this.config.CODEX_EMAIL || 'default';
+        const safeEmail = sanitizeCodexCredentialFilenamePart(email);
 
         // 优先使用配置中指定的路径，否则保存到 configs/codex 目录
         let credsPath;
@@ -504,7 +515,7 @@ class CodexAuth {
             const targetDir = path.join(projectDir, 'configs', 'codex');
             await fs.promises.mkdir(targetDir, { recursive: true });
             const timestamp = Date.now();
-            const filename = `${timestamp}_codex-${email}.json`;
+            const filename = `${timestamp}_codex-${safeEmail}_oauth_creds.json`;
             credsPath = path.join(targetDir, filename);
         }
 
@@ -612,7 +623,7 @@ class CodexAuth {
      * @param {string} refreshToken 
      * @returns {Promise<{isDuplicate: boolean, existingPath?: string}>}
      */
-    async checkDuplicate(accountId, refreshToken) {
+    async checkDuplicate(accountId, refreshToken, email = null) {
         const projectDir = process.cwd();
         const targetDir = path.join(projectDir, 'configs', 'codex');
 
@@ -629,7 +640,18 @@ class CodexAuth {
                         const content = await fs.promises.readFile(fullPath, 'utf8');
                         const credentials = JSON.parse(content);
 
-                        if ((accountId && credentials.account_id === accountId) || (refreshToken && credentials.refresh_token === refreshToken)) {
+                        if (refreshToken && credentials.refresh_token === refreshToken) {
+                            const relativePath = path.relative(process.cwd(), fullPath);
+                            return {
+                                isDuplicate: true,
+                                existingPath: relativePath
+                            };
+                        }
+
+                        if (accountId && credentials.account_id === accountId) {
+                            if (email && credentials.email && credentials.email.toLowerCase() !== email.toLowerCase()) {
+                                continue;
+                            }
                             const relativePath = path.relative(process.cwd(), fullPath);
                             return {
                                 isDuplicate: true,
@@ -674,24 +696,52 @@ export async function batchImportCodexTokensStream(tokens, onProgress = null, sk
         };
 
         try {
-            // 验证 token 数据
-            if (!tokenData.access_token || !tokenData.id_token) {
-                throw new Error('Token 缺少必需字段 (access_token 或 id_token)');
+            if (!tokenData || typeof tokenData !== 'object') {
+                throw new Error('Token 数据必须是 JSON 对象');
             }
 
-            // 解析 JWT 提取账户信息
-            const claims = auth.parseJWT(tokenData.id_token);
-            const accountId = claims['https://api.openai.com/auth']?.chatgpt_account_id || claims.sub;
-            const email = claims.email;
+            if (tokenData.skipped || tokenData.error) {
+                throw new Error(tokenData.reason || tokenData.error || 'skipped');
+            }
+
+            // 验证 token 数据：access_token 是唯一必需字段，id_token/refresh_token 可为空。
+            if (!tokenData.access_token) {
+                throw new Error('Token 缺少必需字段 access_token');
+            }
+
+            // 解析 JWT 提取账户信息。外部导入格式可能没有 id_token，因此回退解析 access_token。
+            let claims = {};
+            for (const candidate of [tokenData.id_token, tokenData.access_token]) {
+                if (!candidate) continue;
+                try {
+                    claims = auth.parseJWT(candidate);
+                    break;
+                } catch {
+                    // access_token-only 导入允许无法解析 JWT，只要外部字段提供了账号信息。
+                }
+            }
+
+            const authClaims = claims['https://api.openai.com/auth'] || {};
+            const profileClaims = claims['https://api.openai.com/profile'] || {};
+            const accountId = tokenData.account_id || tokenData.chatgpt_account_id || authClaims.chatgpt_account_id || claims.sub;
+            const email = tokenData.email || tokenData.name || profileClaims.email || claims.email || (accountId ? `codex-${accountId}` : null);
+
+            if (!accountId) {
+                throw new Error('Token 缺少 account_id/chatgpt_account_id，且无法从 JWT 中解析账号 ID');
+            }
+
+            const refreshToken = tokenData.refresh_token || '';
 
             // 检查重复
             if (!skipDuplicateCheck) {
-                const duplicateCheck = await auth.checkDuplicate(accountId, tokenData.refresh_token);
+                const duplicateCheck = await auth.checkDuplicate(accountId, refreshToken, email);
                 if (duplicateCheck.isDuplicate) {
                     progressData.current = {
                         index: i + 1,
                         success: false,
                         error: 'duplicate',
+                        email,
+                        accountId,
                         existingPath: duplicateCheck.existingPath
                     };
                     results.failed++;
@@ -707,16 +757,44 @@ export async function batchImportCodexTokensStream(tokens, onProgress = null, sk
                 }
             }
 
+            const expiredValue = tokenData.expired || tokenData.expiresAt || tokenData.expire || tokenData.expires_at;
+            let expired;
+            if (expiredValue) {
+                const parsed = typeof expiredValue === 'number'
+                    ? new Date(expiredValue > 1000000000000 ? expiredValue : expiredValue * 1000)
+                    : new Date(expiredValue);
+                expired = Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+            }
+            if (!expired && tokenData.expires_in) {
+                const seconds = Number(tokenData.expires_in);
+                if (Number.isFinite(seconds) && seconds > 0) {
+                    expired = new Date(Date.now() + seconds * 1000).toISOString();
+                }
+            }
+            if (!expired && claims.exp) {
+                const claimExp = Number(claims.exp);
+                if (Number.isFinite(claimExp)) {
+                    const parsed = new Date(claimExp * 1000);
+                    if (!Number.isNaN(parsed.getTime())) {
+                        expired = parsed.toISOString();
+                    }
+                }
+            }
+            if (!expired) {
+                expired = new Date(Date.now() + 3600 * 1000).toISOString();
+            }
+
             // 构建凭据对象
             const credentials = {
-                id_token: tokenData.id_token,
+                id_token: tokenData.id_token || '',
                 access_token: tokenData.access_token,
-                refresh_token: tokenData.refresh_token,
+                refresh_token: refreshToken,
                 account_id: accountId,
-                last_refresh: new Date().toISOString(),
+                last_refresh: tokenData.last_refresh || new Date().toISOString(),
                 email: email,
                 type: 'codex',
-                expired: new Date(Date.now() + (tokenData.expires_in || 3600) * 1000).toISOString()
+                expired,
+                access_token_only: !refreshToken
             };
 
             // 保存凭据
@@ -728,15 +806,12 @@ export async function batchImportCodexTokensStream(tokens, onProgress = null, sk
             progressData.current = {
                 index: i + 1,
                 success: true,
+                email,
+                accountId,
+                accessTokenOnly: !refreshToken,
                 path: relativePath
             };
             results.success++;
-
-            // 自动关联到 Pools
-            await autoLinkProviderConfigs(CONFIG, {
-                onlyCurrentCred: true,
-                credPath: relativePath
-            });
 
         } catch (error) {
             logger.error(`${CODEX_OAUTH_CONFIG.logPrefix} Token ${i + 1} import failed:`, error.message);
@@ -744,6 +819,8 @@ export async function batchImportCodexTokensStream(tokens, onProgress = null, sk
             progressData.current = {
                 index: i + 1,
                 success: false,
+                email: tokenData?.email || tokenData?.name,
+                accountId: tokenData?.account_id || tokenData?.chatgpt_account_id,
                 error: error.message
             };
             results.failed++;
@@ -761,6 +838,12 @@ export async function batchImportCodexTokensStream(tokens, onProgress = null, sk
     }
 
     if (results.success > 0) {
+        try {
+            await autoLinkProviderConfigs(CONFIG);
+        } catch (linkError) {
+            logger.error(`${CODEX_OAUTH_CONFIG.logPrefix} Failed to auto-link imported tokens:`, linkError.message);
+        }
+
         broadcastEvent('oauth_batch_success', {
             provider: 'openai-codex-oauth',
             count: results.success,

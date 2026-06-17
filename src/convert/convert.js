@@ -62,10 +62,10 @@ export function convertData(data, type, fromProvider, toProvider, model, request
         // 根据类型调用相应的转换方法
         switch (type) {
             case 'request':
-                return converter.convertRequest(data, toProtocol);
+                return converter.convertRequest(data, toProtocol, requestId);
                 
             case 'response':
-                return converter.convertResponse(data, toProtocol, model);
+                return converter.convertResponse(data, toProtocol, model, requestId);
                 
             case 'streamChunk':
                 return converter.convertStreamChunk(data, toProtocol, model, requestId);

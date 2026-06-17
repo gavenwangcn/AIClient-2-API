@@ -20,9 +20,19 @@ import {
 export class CodexConverter extends BaseConverter {
     constructor() {
         super('codex');
-        this.toolNameMap = new Map(); // 工具名称缩短映射: original -> short
-        this.reverseToolNameMap = new Map(); // 反向映射: short -> original
         this.streamParams = new Map(); // 用于存储流式状态，key 为响应 ID 或临时标识
+        this.requestStates = new Map(); // 用于存储请求特定的状态（如工具映射），key 为 requestId
+    }
+
+    _getReqState(requestId) {
+        const id = requestId || 'default';
+        if (!this.requestStates.has(id)) {
+            this.requestStates.set(id, {
+                toolNameMap: new Map(),
+                reverseToolNameMap: new Map()
+            });
+        }
+        return this.requestStates.get(id);
     }
 
     /**
@@ -105,21 +115,28 @@ export class CodexConverter extends BaseConverter {
     /**
      * 转换响应
      */
-    convertResponse(data, targetProtocol, model) {
-        switch (targetProtocol) {
-            case MODEL_PROTOCOL_PREFIX.OPENAI:
-                return this.toOpenAIResponse(data, model);
-            case MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES:
-                return this.toOpenAIResponsesResponse(data, model);
-            case MODEL_PROTOCOL_PREFIX.GEMINI:
-                return this.toGeminiResponse(data, model);
-            case MODEL_PROTOCOL_PREFIX.CLAUDE:
-                return this.toClaudeResponse(data, model);
-            case MODEL_PROTOCOL_PREFIX.CODEX:
-                return data; // Codex to Codex
-            default:
-                throw new Error(`Unsupported target protocol: ${targetProtocol}`);
-        }
+    convertResponse(data, targetProtocol, model, requestId) {
+        const id = requestId || data?.response?.id || 'default';
+        const result = (() => {
+            switch (targetProtocol) {
+                case MODEL_PROTOCOL_PREFIX.OPENAI:
+                    return this.toOpenAIResponse(data, model, id);
+                case MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES:
+                    return this.toOpenAIResponsesResponse(data, model, id);
+                case MODEL_PROTOCOL_PREFIX.GEMINI:
+                    return this.toGeminiResponse(data, model, id);
+                case MODEL_PROTOCOL_PREFIX.CLAUDE:
+                    return this.toClaudeResponse(data, model, id);
+                case MODEL_PROTOCOL_PREFIX.CODEX:
+                    return data; // Codex to Codex
+                default:
+                    throw new Error(`Unsupported target protocol: ${targetProtocol}`);
+            }
+        })();
+        
+        // 非流式清理状态
+        this.requestStates.delete(id);
+        return result;
     }
 
     /**
@@ -128,9 +145,9 @@ export class CodexConverter extends BaseConverter {
     convertStreamChunk(chunk, targetProtocol, model, requestId) {
         switch (targetProtocol) {
             case MODEL_PROTOCOL_PREFIX.OPENAI:
-                return this.toOpenAIStreamChunk(chunk, model);
+                return this.toOpenAIStreamChunk(chunk, model, requestId);
             case MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES:
-                return this.toOpenAIResponsesStreamChunk(chunk, model);
+                return this.toOpenAIResponsesStreamChunk(chunk, model, requestId);
             case MODEL_PROTOCOL_PREFIX.GEMINI:
                 return this.toGeminiStreamChunk(chunk, model, requestId);
             case MODEL_PROTOCOL_PREFIX.CLAUDE:
@@ -161,8 +178,11 @@ export class CodexConverter extends BaseConverter {
     /**
      * OpenAI Responses → Codex 请求转换
      */
-    toOpenAIResponsesToCodexRequest(responsesRequest) {
+    toOpenAIResponsesToCodexRequest(responsesRequest, requestId) {
         let codexRequest = { ...responsesRequest };
+        
+        // 构建工具名称映射
+        this.buildToolNameMap(responsesRequest.tools || [], requestId);
     
         // 保留监控相关字段
         if (responsesRequest._monitorRequestId) {
@@ -250,14 +270,14 @@ export class CodexConverter extends BaseConverter {
     /**
      * OpenAI → Codex 请求转换
      */
-    toOpenAIRequestToCodexRequest(data) {
+    toOpenAIRequestToCodexRequest(data, requestId) {
         // 构建工具名称映射
-        this.buildToolNameMap(data.tools || []);
+        this.buildToolNameMap(data.tools || [], requestId);
 
         const codexRequest = {
             model: data.model,
             instructions: this.buildInstructions(data),
-            input: this.convertMessages((data.messages || []).filter(m => m.role !== 'system' && m.role !== 'developer')),
+            input: this.convertMessages((data.messages || []).filter(m => m.role !== 'system' && m.role !== 'developer'), requestId),
             stream: true,
             store: false,
             metadata: data.metadata || {},
@@ -321,11 +341,11 @@ export class CodexConverter extends BaseConverter {
         }
 
         if (data.tools && data.tools.length > 0) {
-            codexRequest.tools = this.convertTools(data.tools);
+            codexRequest.tools = this.convertTools(data.tools, requestId);
         }
 
         if (data.tool_choice) {
-            codexRequest.tool_choice = this.convertToolChoice(data.tool_choice);
+            codexRequest.tool_choice = this.convertToolChoice(data.tool_choice, requestId);
         }
 
         if (data.response_format || data.text?.verbosity) {
@@ -391,8 +411,9 @@ export class CodexConverter extends BaseConverter {
     /**
      * 转换消息
      */
-    convertMessages(messages) {
+    convertMessages(messages, requestId) {
         const input = [];
+        const state = this._getReqState(requestId);
 
         for (const msg of messages) {
             const role = msg.role;
@@ -419,7 +440,7 @@ export class CodexConverter extends BaseConverter {
                         if (toolCall.type === 'function' || toolCall.function) {
                             const func = toolCall.function || toolCall;
                             const originalName = func.name;
-                            const shortName = this.toolNameMap.get(originalName) || this.shortenToolName(originalName);
+                            const shortName = state.toolNameMap.get(originalName) || this.shortenToolName(originalName);
                             input.push({
                                 type: 'function_call',
                                 call_id: toolCall.id,
@@ -435,7 +456,7 @@ export class CodexConverter extends BaseConverter {
                     for (const part of msg.content) {
                         if (part.type === 'tool_use') {
                             const originalName = part.name;
-                            const shortName = this.toolNameMap.get(originalName) || this.shortenToolName(originalName);
+                            const shortName = state.toolNameMap.get(originalName) || this.shortenToolName(originalName);
                             input.push({
                                 type: 'function_call',
                                 call_id: part.id,
@@ -501,9 +522,10 @@ export class CodexConverter extends BaseConverter {
     /**
      * 构建工具名称映射
      */
-    buildToolNameMap(tools) {
-        this.toolNameMap.clear();
-        this.reverseToolNameMap.clear();
+    buildToolNameMap(tools, requestId) {
+        const state = this._getReqState(requestId);
+        state.toolNameMap.clear();
+        state.reverseToolNameMap.clear();
 
         const names = [];
         for (const t of tools) {
@@ -550,15 +572,16 @@ export class CodexConverter extends BaseConverter {
                 }
             }
             used.add(uniq);
-            this.toolNameMap.set(n, uniq);
-            this.reverseToolNameMap.set(uniq, n);
+            state.toolNameMap.set(n, uniq);
+            state.reverseToolNameMap.set(uniq, n);
         }
     }
 
     /**
      * 转换工具
      */
-    convertTools(tools) {
+    convertTools(tools, requestId) {
+        const state = this._getReqState(requestId);
         return tools.map(tool => {
             const builtinTool = this.normalizeCodexBuiltinTool(tool);
             if (builtinTool) {
@@ -576,7 +599,7 @@ export class CodexConverter extends BaseConverter {
 
             const func = tool.function || tool;
             const originalName = func.name;
-            const shortName = this.toolNameMap.get(originalName) || this.shortenToolName(originalName);
+            const shortName = state.toolNameMap.get(originalName) || this.shortenToolName(originalName);
 
             const result = {
                 type: 'function',
@@ -598,14 +621,15 @@ export class CodexConverter extends BaseConverter {
     /**
      * 转换 tool_choice
      */
-    convertToolChoice(toolChoice) {
+    convertToolChoice(toolChoice, requestId) {
         if (typeof toolChoice === 'string') {
             return toolChoice;
         }
 
         if (toolChoice.type === 'function') {
+            const state = this._getReqState(requestId);
             const name = toolChoice.function?.name;
-            const shortName = name ? (this.toolNameMap.get(name) || this.shortenToolName(name)) : '';
+            const shortName = name ? (state.toolNameMap.get(name) || this.shortenToolName(name)) : '';
             return {
                 type: 'function',
                 name: shortName
@@ -634,8 +658,9 @@ export class CodexConverter extends BaseConverter {
     /**
      * 获取原始工具名称
      */
-    getOriginalToolName(shortName) {
-        return this.reverseToolNameMap.get(shortName) || shortName;
+    getOriginalToolName(shortName, requestId) {
+        const state = this._getReqState(requestId);
+        return state.reverseToolNameMap.get(shortName) || shortName;
     }
 
     /**
@@ -995,10 +1020,10 @@ export class CodexConverter extends BaseConverter {
     /**
      * Codex → OpenAI 流式响应块转换
      */
-    toOpenAIStreamChunk(chunk, model) {
+    toOpenAIStreamChunk(chunk, model, requestId) {
         const type = chunk.type;
-        // 使用固定的 key 来存储当前流的状态
-        const stateKey = 'openai_stream_current';
+        // 使用 requestId 作为 key，避免并发请求混淆
+        const stateKey = requestId || chunk.response?.id || 'openai_stream_current';
         
         if (!this.streamParams.has(stateKey)) {
             this.streamParams.set(stateKey, {
@@ -1120,7 +1145,7 @@ export class CodexConverter extends BaseConverter {
                     id: chunk.item.call_id,
                     type: 'function',
                     function: {
-                        name: this.getOriginalToolName(chunk.item.name),
+                        name: this.getOriginalToolName(chunk.item.name, requestId),
                         arguments: typeof chunk.item.arguments === 'string' ? chunk.item.arguments : JSON.stringify(chunk.item.arguments)
                     }
                 }]
@@ -1194,6 +1219,7 @@ export class CodexConverter extends BaseConverter {
             }
             // 完成后清理状态
             this.streamParams.delete(stateKey);
+            this.requestStates.delete(stateKey);
             results.push(template);
             return results.length === 1 ? results[0] : results;
         }
@@ -1204,13 +1230,13 @@ export class CodexConverter extends BaseConverter {
     /**
      * Codex → OpenAI Responses 流式响应转换
      */
-    toOpenAIResponsesStreamChunk(chunk, model) {
+    toOpenAIResponsesStreamChunk(chunk, model, requestId) {
         if(true){
             return chunk;
         }
 
         const type = chunk.type;
-        const resId = chunk.response?.id || 'default';
+        const resId = requestId || chunk.response?.id || 'default';
         
         if (!this.streamParams.has(resId)) {
             this.streamParams.set(resId, {
@@ -1267,7 +1293,7 @@ export class CodexConverter extends BaseConverter {
                 item: {
                     id: chunk.item.call_id,
                     type: "function_call",
-                    name: this.getOriginalToolName(chunk.item.name),
+                    name: this.getOriginalToolName(chunk.item.name, requestId),
                     arguments: typeof chunk.item.arguments === 'string' ? chunk.item.arguments : JSON.stringify(chunk.item.arguments),
                     status: "completed"
                 }
@@ -1300,6 +1326,7 @@ export class CodexConverter extends BaseConverter {
             };
             events.push(completedEvent);
             this.streamParams.delete(resId);
+            this.requestStates.delete(resId);
             return events;
         }
 
@@ -1347,7 +1374,7 @@ export class CodexConverter extends BaseConverter {
         if (type === 'response.output_item.done' && chunk.item?.type === 'function_call') {
             template.candidates[0].content.parts.push({
                 functionCall: {
-                    name: this.getOriginalToolName(chunk.item.name),
+                    name: this.getOriginalToolName(chunk.item.name, requestId),
                     args: typeof chunk.item.arguments === 'string' ? JSON.parse(chunk.item.arguments) : chunk.item.arguments
                 }
             });
@@ -1386,6 +1413,7 @@ export class CodexConverter extends BaseConverter {
                 cachedContentTokenCount: this.getCachedInputTokens(chunk.response.usage)
             };
             this.streamParams.delete(resId);
+            this.requestStates.delete(resId);
             return template;
         }
 
@@ -1522,7 +1550,7 @@ export class CodexConverter extends BaseConverter {
                     content_block: {
                         type: "tool_use",
                         id: chunk.item.call_id,
-                        name: this.getOriginalToolName(chunk.item.name),
+                        name: this.getOriginalToolName(chunk.item.name, requestId),
                         input: {}
                     }
                 },
@@ -1632,6 +1660,7 @@ export class CodexConverter extends BaseConverter {
             );
             // 清理该请求的流状态
             this.streamParams.delete(stateKey);
+            this.requestStates.delete(stateKey);
             return events;
         }
 

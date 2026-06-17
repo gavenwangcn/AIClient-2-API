@@ -28,5 +28,10 @@ export {
     handleConsensusOAuth,
     cancelConsensusMcporterAuth,
     // Grok Auth
-    batchImportGrokTokensStream
+    batchImportGrokTokensStream,
+    // Grok CLI OAuth
+    refreshGrokCliTokensWithRetry,
+    handleGrokCliOAuth,
+    handleGrokCliOAuthCallback,
+    batchImportGrokCliTokensStream
 } from './index.js';

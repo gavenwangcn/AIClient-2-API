@@ -187,11 +187,13 @@ function getProviderDisplayName(providerType) {
         'claude-custom': 'Claude Custom',
         'claude-kiro-oauth': 'Claude Kiro (OAuth)',
         'openai-custom': 'OpenAI Custom',
+        'atlascloud': 'AtlasCloud',
         'openaiResponses-custom': 'OpenAI Responses Custom',
         'openai-qwen-oauth': 'Qwen (OAuth)',
         'openai-iflow': 'iFlow',
         'openai-codex-oauth': 'OpenAI Codex (OAuth)',
         'consensus-mcp-oauth': 'Consensus MCP',
+        'grok-cli-oauth': 'Grok CLI (OAuth)',
         'grok-web': 'Grok Web'
     };
 

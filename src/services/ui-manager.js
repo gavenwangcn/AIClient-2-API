@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'fs';
 import path from 'path';
 import { isUIApiPath } from '../utils/ui-utils.js';
 import { getPluginManager } from '../core/plugin-manager.js';
+import { resolvePluginStaticFile } from '../core/plugin-security.js';
 
 // Import UI modules
 import * as auth from '../ui-modules/auth.js';
@@ -35,10 +36,7 @@ export async function serveStaticFiles(pathParam, res) {
         const pluginManager = getPluginManager();
         const plugin = pluginManager.getPluginByStaticPath(pathParam);
         if (plugin && plugin._baseDir) {
-            // 假设静态文件名就是路径的最后一部分，或者插件内部有映射
-            // 这里我们简单处理：如果路径匹配，就在插件目录下寻找该文件
-            const fileName = pathParam.split('/').pop();
-            filePath = path.join(plugin._baseDir, fileName);
+            filePath = resolvePluginStaticFile(plugin, pathParam);
         }
     }
 
@@ -425,6 +423,14 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await oauthApi.handleBatchImportCodexTokens(req, res);
     }
 
+    if (method === 'POST' && pathParam === '/api/grok-cli/batch-import-tokens') {
+        return await oauthApi.handleBatchImportGrokCliTokens(req, res);
+    }
+
+    if (method === 'POST' && pathParam === '/api/codex/import-external-credentials') {
+        return await oauthApi.handleImportCodexExternalCredentials(req, res);
+    }
+
     if (method === 'POST' && pathParam === '/api/grok/batch-import-tokens') {
         return await oauthApi.handleBatchImportGrokTokens(req, res);
     }
@@ -459,6 +465,13 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
     if (method === 'POST' && togglePluginMatch) {
         const pluginName = decodeURIComponent(togglePluginMatch[1]);
         return await pluginApi.handleTogglePlugin(req, res, pluginName);
+    }
+
+    // Uninstall plugin
+    const uninstallPluginMatch = pathParam.match(/^\/api\/plugins\/(.+)$/);
+    if (method === 'DELETE' && uninstallPluginMatch) {
+        const pluginName = decodeURIComponent(uninstallPluginMatch[1]);
+        return await pluginApi.handleUninstallPlugin(req, res, pluginName);
     }
 
     // Custom models management

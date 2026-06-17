@@ -66,6 +66,8 @@ class ResponsesAPIStrategy extends ProviderStrategy {
             return requestBody;
         }
 
+        const existingSystemText = extractSystemPromptFromRequestBody(requestBody, MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES);
+
         const newSystemText = config.SYSTEM_PROMPT_MODE === 'append' && existingSystemText
             ? `${existingSystemText}\n${filePromptContent}`
             : filePromptContent;
@@ -75,34 +77,18 @@ class ResponsesAPIStrategy extends ProviderStrategy {
 
         // In Responses API, system instructions are typically passed in 'instructions' field
         // or in the input array with role: 'system'
-        requestBody.instructions = requestBody.instructions || finalSystemText;
-
-        // If using instructions field is not desired, append to input array instead
-        if (!requestBody.instructions || config.SYSTEM_PROMPT_MODE === 'append') {
-            if (typeof requestBody.input === 'string') {
-                // Convert to array format to add system message
-                requestBody.input = [
-                    { role: 'system', content: finalSystemText },
-                    { role: 'user', content: requestBody.input }
-                ];
-            } else if (Array.isArray(requestBody.input)) {
-                // Check if system message already exists
-                const systemMessageIndex = requestBody.input.findIndex(m =>
-                    m.role === 'system' || (m.type && m.type === 'system')
-                );
-
-                if (systemMessageIndex !== -1) {
-                    requestBody.input[systemMessageIndex].content = finalSystemText;
-                } else {
-                    requestBody.input.unshift({ role: 'system', content: finalSystemText });
-                }
-            } else {
-                // If input is not defined, initialize with system message
-                requestBody.input = [{ role: 'system', content: finalSystemText }];
-            }
-        } else if (requestBody.instructions) {
-            // If system prompt mode is not append, then replace the instructions
+        if (requestBody.instructions !== undefined || !Array.isArray(requestBody.input)) {
             requestBody.instructions = finalSystemText;
+        } else {
+            const systemMessageIndex = requestBody.input.findIndex(m =>
+                m.role === 'system' || m.role === 'developer' || m.type === 'system' || m.type === 'developer'
+            );
+
+            if (systemMessageIndex !== -1) {
+                requestBody.input[systemMessageIndex].content = finalSystemText;
+            } else {
+                requestBody.input.unshift({ role: 'system', content: finalSystemText });
+            }
         }
 
         logger.info(`[System Prompt] Applied system prompt from ${config.SYSTEM_PROMPT_FILE_PATH} in '${config.SYSTEM_PROMPT_MODE}' mode for provider 'responses'.`);
@@ -111,20 +97,7 @@ class ResponsesAPIStrategy extends ProviderStrategy {
     }
 
     async manageSystemPrompt(requestBody) {
-        // For Responses API, we may extract instructions or system messages from input
-        let incomingSystemText = '';
-
-        if (requestBody.instructions) {
-            incomingSystemText = requestBody.instructions;
-        } else if (Array.isArray(requestBody.input)) {
-            const systemMessage = requestBody.input.find(item =>
-                item.role === 'system' || (item.type && item.type === 'system')
-            );
-            if (systemMessage && systemMessage.content) {
-                incomingSystemText = systemMessage.content;
-            }
-        }
-
+        const incomingSystemText = extractSystemPromptFromRequestBody(requestBody, MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES);
         await this._updateSystemPromptFile(incomingSystemText, MODEL_PROTOCOL_PREFIX.OPENAI);
     }
 }

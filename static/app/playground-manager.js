@@ -183,6 +183,20 @@ function bindEvents() {
         if (e.target.closest('#pg-stop-btn')) handleStop();
         if (e.target.closest('#pg-clear-btn')) clearChat();
         if (e.target.closest('#pg-attach-btn')) el('pg-file-input')?.click();
+
+        // 移动端响应式选项卡切换
+        const tabBtn = e.target.closest('.pg-tab-btn');
+        if (tabBtn) {
+            const targetTab = tabBtn.getAttribute('data-tab');
+            switchPlaygroundTab(targetTab);
+        }
+
+        // 移动端一键进入对话按钮切换
+        const startChatBtn = e.target.closest('[data-tab-switch]');
+        if (startChatBtn) {
+            const targetTab = startChatBtn.getAttribute('data-tab-switch');
+            switchPlaygroundTab(targetTab);
+        }
     });
 
     document.addEventListener('change', (e) => {
@@ -781,6 +795,16 @@ function isSafeImageUrl(url) {
     return url.startsWith('data:image/') || /^https?:\/\//.test(url);
 }
 
+function isSafeVideoUrl(url) {
+    return /^https?:\/\/[^\s"'<>]+$/i.test(url) &&
+        /\.(mp4|webm|mov|m4v)(\?[^"'<>]*)?$/i.test(url);
+}
+
+function renderVideoPlayer(url, label = 'Play Video') {
+    if (!isSafeVideoUrl(url)) return '';
+    return `<div class="pg-video-block"><video src="${url}" controls preload="metadata" playsinline></video><a href="${url}" target="_blank" rel="noopener noreferrer">${label || 'Play Video'}</a></div>`;
+}
+
 function renderMarkdown(text) {
     const blocks = [];
     // Protect code blocks
@@ -800,12 +824,28 @@ function renderMarkdown(text) {
     text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
     text = text.replace(/\*([^*]+)\*/g, '<em>$1</em>');
 
+    // Linked video thumbnails: [![video](thumb)](video.mp4)
+    const renderedVideos = new Set();
+    text = text.replace(/\[!\[([^\]]*)\]\(([^)]+)\)\]\((https?:\/\/[^)]+)\)/g, (match, alt, thumbUrl, videoUrl) => {
+        if (!isSafeVideoUrl(videoUrl)) return match;
+        renderedVideos.add(videoUrl);
+        return renderVideoPlayer(videoUrl, alt || 'Play Video');
+    });
+
+    // Video links
+    text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, (match, label, url) => {
+        if (!isSafeVideoUrl(url)) return match;
+        if (renderedVideos.has(url)) return '';
+        renderedVideos.add(url);
+        return renderVideoPlayer(url, label);
+    });
+
     // Basic images/links
     text = text.replace(/!\[([^\]]*)\]\(([^)]+)\)/g, (match, alt, url) => {
         if (!isSafeImageUrl(url)) return match;
         return `<img src="${url}" alt="${alt}" style="max-width:100%;border-radius:8px;margin:0.5rem 0;display:block">`;
     });
-    text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank">$1</a>');
+    text = text.replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
 
     // Newlines
     text = text.replace(/\n/g, '<br>');
@@ -913,4 +953,30 @@ function renderAttachmentPreview() {
         };
         preview.appendChild(tag);
     });
+}
+
+function switchPlaygroundTab(tabName) {
+    const pg = el('playground');
+    if (!pg) return;
+
+    pg.classList.remove('active-tab-chat', 'active-tab-settings', 'active-tab-parameters');
+    pg.classList.add(`active-tab-${tabName}`);
+
+    const tabs = pg.querySelectorAll('.pg-tab-btn');
+    tabs.forEach(btn => {
+        if (btn.getAttribute('data-tab') === tabName) {
+            btn.classList.add('active');
+        } else {
+            btn.classList.remove('active');
+        }
+    });
+
+    if (tabName === 'chat') {
+        setTimeout(() => {
+            const input = getInput();
+            if (input && !input.disabled) {
+                input.focus();
+            }
+        }, 100);
+    }
 }

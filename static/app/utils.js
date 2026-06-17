@@ -42,6 +42,12 @@ function getBaseProviderConfigs() {
             icon: 'fa-code',
             defaultPath: 'configs/codex/'
         },
+        {
+            id: 'grok-cli-oauth',
+            name: t('dashboard.routing.nodeName.grokCli'),
+            icon: 'fa-terminal',
+            defaultPath: 'configs/grok-cli/'
+        },
         { 
             id: 'consensus-mcp-oauth', 
             name: 'Consensus MCP', 
@@ -80,6 +86,11 @@ function getBaseProviderConfigs() {
             name: 'OpenAI Responses', 
             icon: 'fa-reply-all'
         },
+        { 
+            id: 'atlascloud', 
+            name: 'AtlasCloud', 
+            icon: 'fa-cloud'
+        },
     ];
 }
 
@@ -94,25 +105,36 @@ function getProviderConfigs(supportedProviders = []) {
     const result = [];
     const usedIds = new Set();
 
-    // 1. 处理 supportedProviders 中匹配基础配置的类型
-    baseConfigs.forEach(config => {
-        const isSupported = supportedProviders.includes(config.id);
-        result.push({ ...config, visible: isSupported });
-        usedIds.add(config.id);
+    // 1. 遍历基础配置，使其按照定义顺序排列，并且让带后缀的自定义提供商紧跟在它的基础母版后面
+    baseConfigs.forEach(baseConfig => {
+        const isSupported = supportedProviders.includes(baseConfig.id);
+        result.push({ ...baseConfig, visible: isSupported });
+        usedIds.add(baseConfig.id);
+
+        // 紧接着寻找匹配该基础 ID 的带后缀的自定义类型（例如 openai-custom-test）
+        supportedProviders.forEach(providerId => {
+            if (usedIds.has(providerId)) return;
+
+            if (providerId.startsWith(baseConfig.id + '-')) {
+                const suffix = providerId.substring(baseConfig.id.length + 1);
+                result.push({
+                    ...baseConfig,
+                    id: providerId,
+                    name: `${baseConfig.name} (${suffix})`,
+                    visible: true
+                });
+                usedIds.add(providerId);
+            }
+        });
     });
 
-    // 2. 处理带有后缀的自定义类型 (例如 openai-custom-test)
+    // 2. 安全兜底：如果还有一些 supportedProviders 既不匹配任何基础 ID 也不匹配任何前缀，就追加到最后
     supportedProviders.forEach(providerId => {
-        if (usedIds.has(providerId)) return;
-
-        // 查找匹配的前缀
-        const baseConfig = baseConfigs.find(bc => providerId.startsWith(bc.id + '-'));
-        if (baseConfig) {
-            const suffix = providerId.substring(baseConfig.id.length + 1);
+        if (!usedIds.has(providerId)) {
             result.push({
-                ...baseConfig,
                 id: providerId,
-                name: `${baseConfig.name} (${suffix})`,
+                name: providerId,
+                icon: 'fa-server',
                 visible: true
             });
             usedIds.add(providerId);
@@ -205,8 +227,10 @@ function getFieldLabel(key) {
         'ANTIGRAVITY_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
         'IFLOW_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
         'CODEX_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
+        'GROK_CLI_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
         'GROK_COOKIE_TOKEN': t('modal.provider.field.ssoToken'),
         'GROK_CF_CLEARANCE': t('modal.provider.field.cfClearance'),
+        'GROK_CF_BM': t('modal.provider.field.cfBm'),
 
         'GROK_USER_AGENT': t('modal.provider.field.userAgent'),
         'GEMINI_BASE_URL': 'Gemini Base URL',
@@ -245,6 +269,20 @@ function getProviderTypeFields(providerType) {
     // 基础配置字段定义
     const fieldConfigs = {
         'openai-custom': [
+            {
+                id: 'OPENAI_API_KEY',
+                label: t('modal.provider.field.apiKey'),
+                type: 'password',
+                placeholder: 'sk-...'
+            },
+            {
+                id: 'OPENAI_BASE_URL',
+                label: 'OpenAI Base URL',
+                type: 'text',
+                placeholder: 'https://api.openai.com/v1'
+            }
+        ],
+        'atlascloud': [
             {
                 id: 'OPENAI_API_KEY',
                 label: t('modal.provider.field.apiKey'),
@@ -432,6 +470,26 @@ function getProviderTypeFields(providerType) {
                 placeholder: 'consensus'
             }
         ],
+        'grok-cli-oauth': [
+            {
+                id: 'GROK_CLI_OAUTH_CREDS_FILE_PATH',
+                label: t('modal.provider.field.oauthPath'),
+                type: 'text',
+                placeholder: 'configs/grok-cli/..._xai-..._oauth_creds.json'
+            },
+            {
+                id: 'GROK_CLI_EMAIL',
+                label: `${t('modal.provider.field.email')} <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'email',
+                placeholder: t('modal.provider.field.email.placeholder')
+            },
+            {
+                id: 'GROK_CLI_BASE_URL',
+                label: `xAI Base URL <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'text',
+                placeholder: 'https://api.x.ai/v1'
+            }
+        ],
         'grok-web': [
             {
                 id: 'GROK_COOKIE_TOKEN',
@@ -440,10 +498,22 @@ function getProviderTypeFields(providerType) {
                 placeholder: 'sso cookie token'
             },
             {
+                id: 'GROK_BASE_URL',
+                label: `${t('modal.provider.field.grokBaseUrl')} <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'text',
+                placeholder: 'https://grok.com'
+            },
+            {
                 id: 'GROK_CF_CLEARANCE',
                 label: `${t('modal.provider.field.cfClearance')} <span class="optional-tag">${t('config.optional')}</span>`,
                 type: 'text',
                 placeholder: 'cf_clearance cookie value'
+            },
+            {
+                id: 'GROK_CF_BM',
+                label: `${t('modal.provider.field.cfBm')} <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'text',
+                placeholder: '__cf_bm cookie value'
             },
             {
                 id: 'GROK_USER_AGENT',
@@ -452,10 +522,10 @@ function getProviderTypeFields(providerType) {
                 placeholder: 'Mozilla/5.0 ...'
             },
             {
-                id: 'GROK_BASE_URL',
-                label: `${t('modal.provider.field.grokBaseUrl')} <span class="optional-tag">${t('config.optional')}</span>`,
+                id: 'GROK_STATSIG_ID',
+                label: `${t('modal.provider.field.statsigId')} <span class="optional-tag">${t('config.optional')}</span>`,
                 type: 'text',
-                placeholder: 'https://grok.com'
+                placeholder: 'x-statsig-id header value'
             }
         ],
         'forward-api': [

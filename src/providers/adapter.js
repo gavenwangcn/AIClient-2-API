@@ -10,6 +10,7 @@ import { CodexApiService } from './openai/codex-core.js';
 import { ForwardApiService } from './forward/forward-core.js';
 import { GrokApiService } from './grok/grok-core.js';
 import { ConsensusApiService } from './consensus/consensus-core.js';
+import { GrokCliApiService } from './grok/grok-cli-core.js';
 import { MODEL_PROVIDER } from '../utils/constants.js';
 import logger from '../utils/logger.js';
 
@@ -770,8 +771,57 @@ export class GrokApiServiceAdapter extends ApiServiceAdapter {
     }
 }
 
+// Grok CLI OAuth / xAI Responses API 服务适配器
+export class GrokCliApiServiceAdapter extends ApiServiceAdapter {
+    constructor(config) {
+        super();
+        this.grokCliApiService = new GrokCliApiService(config);
+    }
+
+    async generateContent(model, requestBody) {
+        if (!this.grokCliApiService.isInitialized) {
+            await this.grokCliApiService.initialize();
+        }
+        return this.grokCliApiService.generateContent(model, requestBody);
+    }
+
+    async *generateContentStream(model, requestBody) {
+        if (!this.grokCliApiService.isInitialized) {
+            await this.grokCliApiService.initialize();
+        }
+        yield* this.grokCliApiService.generateContentStream(model, requestBody);
+    }
+
+    async listModels() {
+        if (!this.grokCliApiService.isInitialized) {
+            await this.grokCliApiService.initialize();
+        }
+        return this.grokCliApiService.listModels();
+    }
+
+    async refreshToken() {
+        return this.grokCliApiService.refreshToken();
+    }
+
+    async forceRefreshToken() {
+        return this.grokCliApiService.forceRefreshToken();
+    }
+
+    isExpiryDateNear() {
+        return this.grokCliApiService.isExpiryDateNear();
+    }
+
+    async getUsageLimits() {
+        if (!this.grokCliApiService.isInitialized) {
+            await this.grokCliApiService.initialize();
+        }
+        return this.grokCliApiService.getUsageLimits();
+    }
+}
+
 // 注册所有内置适配器
 registerAdapter(MODEL_PROVIDER.OPENAI_CUSTOM, OpenAIApiServiceAdapter);
+registerAdapter(MODEL_PROVIDER.ATLASCLOUD, OpenAIApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.OPENAI_CUSTOM_RESPONSES, OpenAIResponsesApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.CLAUDE_CUSTOM, ClaudeApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.GEMINI_CLI, GeminiApiServiceAdapter);
@@ -780,6 +830,7 @@ registerAdapter(MODEL_PROVIDER.KIRO_API, KiroApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.CODEX_API, CodexApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.GROK_WEB, GrokApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.CONSENSUS_MCP, ConsensusApiServiceAdapter);
+registerAdapter(MODEL_PROVIDER.GROK_CLI, GrokCliApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.FORWARD_API, ForwardApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.QWEN_API, QwenApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.IFLOW_API, IFlowApiServiceAdapter);

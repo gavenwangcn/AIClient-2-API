@@ -10,9 +10,11 @@ import { MODEL_PROTOCOL_PREFIX } from '../../utils/common.js';
 import {
     extractAndProcessSystemMessages as extractSystemMessages,
     extractTextFromMessageContent as extractText,
+    cleanJsonSchemaForOpenAI,
     CLAUDE_DEFAULT_MAX_TOKENS,
     GEMINI_DEFAULT_INPUT_TOKEN_LIMIT,
-    GEMINI_DEFAULT_OUTPUT_TOKEN_LIMIT
+    GEMINI_DEFAULT_OUTPUT_TOKEN_LIMIT,
+    safeParseJSON
 } from '../utils.js';
 import {
     generateResponseCreated,
@@ -33,6 +35,7 @@ export class OpenAIResponsesConverter extends BaseConverter {
     constructor() {
         super(MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES);
         this.codexConverter = new CodexConverter();
+        this.claudeStreamStates = new Map();
     }
 
     // =============================================================================
@@ -80,12 +83,12 @@ export class OpenAIResponsesConverter extends BaseConverter {
     /**
      * 转换流式响应块到目标协议
      */
-    convertStreamChunk(chunk, toProtocol, model) {
+    convertStreamChunk(chunk, toProtocol, model, requestId) {
         switch (toProtocol) {
             case MODEL_PROTOCOL_PREFIX.OPENAI:
                 return this.toOpenAIStreamChunk(chunk, model);
             case MODEL_PROTOCOL_PREFIX.CLAUDE:
-                return this.toClaudeStreamChunk(chunk, model);
+                return this.toClaudeStreamChunk(chunk, model, requestId);
             case MODEL_PROTOCOL_PREFIX.GEMINI:
                 return this.toGeminiStreamChunk(chunk, model);
             case MODEL_PROTOCOL_PREFIX.CODEX:
@@ -180,7 +183,7 @@ export class OpenAIResponsesConverter extends BaseConverter {
                         
                         if (content || (item.role === 'assistant' || item.role === 'developer')) {
                             openaiRequest.messages.push({
-                                role: item.role === 'developer' ? 'assistant' : item.role,
+                                role: item.role === 'developer' ? 'system' : item.role,
                                 content: content
                             });
                         }
@@ -215,7 +218,7 @@ export class OpenAIResponsesConverter extends BaseConverter {
         if (responsesRequest.messages && Array.isArray(responsesRequest.messages)) {
             responsesRequest.messages.forEach(msg => {
                 openaiRequest.messages.push({
-                    role: msg.role,
+                    role: msg.role === 'developer' ? 'system' : msg.role,
                     content: msg.content
                 });
             });
@@ -261,7 +264,8 @@ export class OpenAIResponsesConverter extends BaseConverter {
      * 将 OpenAI Responses 响应转换为标准 OpenAI 响应
      */
     toOpenAIResponse(responsesResponse, model) {
-        const choices = [];
+        const contentParts = [];
+        const toolCalls = [];
         let usage = {
             prompt_tokens: 0,
             completion_tokens: 0,
@@ -271,36 +275,23 @@ export class OpenAIResponsesConverter extends BaseConverter {
         };
 
         if (responsesResponse.output && Array.isArray(responsesResponse.output)) {
-            responsesResponse.output.forEach((item, index) => {
+            responsesResponse.output.forEach((item) => {
                 if (item.type === 'message') {
                     const content = item.content
                         ?.filter(c => c.type === 'output_text')
                         .map(c => c.text)
                         .join('') || '';
-                    
-                    choices.push({
-                        index: index,
-                        message: {
-                            role: 'assistant',
-                            content: content
-                        },
-                        finish_reason: responsesResponse.status === 'completed' ? 'stop' : null
-                    });
+                    if (content) {
+                        contentParts.push(content);
+                    }
                 } else if (item.type === 'function_call') {
-                    choices.push({
-                        index: index,
-                        message: {
-                            role: 'assistant',
-                            tool_calls: [{
-                                id: item.call_id,
-                                type: 'function',
-                                function: {
-                                    name: item.name,
-                                    arguments: item.arguments
-                                }
-                            }]
-                        },
-                        finish_reason: 'tool_calls'
+                    toolCalls.push({
+                        id: item.call_id || item.id,
+                        type: 'function',
+                        function: {
+                            name: item.name,
+                            arguments: typeof item.arguments === 'string' ? item.arguments : JSON.stringify(item.arguments || {})
+                        }
                     });
                 }
             });
@@ -320,18 +311,32 @@ export class OpenAIResponsesConverter extends BaseConverter {
             };
         }
 
+        const message = {
+            role: 'assistant',
+            content: contentParts.length > 0 ? contentParts.join('') : (toolCalls.length > 0 ? null : '')
+        };
+        if (toolCalls.length > 0) {
+            message.tool_calls = toolCalls;
+        }
+
+        let finishReason = null;
+        if (toolCalls.length > 0) {
+            finishReason = 'tool_calls';
+        } else if (!responsesResponse.status || responsesResponse.status === 'completed') {
+            finishReason = 'stop';
+        } else if (responsesResponse.status === 'incomplete') {
+            finishReason = 'length';
+        }
+
         return {
             id: responsesResponse.id || `chatcmpl-${Date.now()}`,
             object: 'chat.completion',
             created: responsesResponse.created_at || Math.floor(Date.now() / 1000),
             model: model || responsesResponse.model,
-            choices: choices.length > 0 ? choices : [{
+            choices: [{
                 index: 0,
-                message: {
-                    role: 'assistant',
-                    content: ''
-                },
-                finish_reason: 'stop'
+                message,
+                finish_reason: finishReason
             }],
             usage: usage
         };
@@ -387,6 +392,219 @@ export class OpenAIResponsesConverter extends BaseConverter {
     // 转换到 Claude 格式
     // =============================================================================
 
+    _stringifyContentValue(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        if (typeof value === 'string') {
+            return value;
+        }
+        return JSON.stringify(value);
+    }
+
+    _normalizeInstructions(instructions) {
+        if (instructions === null || instructions === undefined) {
+            return '';
+        }
+        if (typeof instructions === 'string') {
+            return instructions;
+        }
+        if (Array.isArray(instructions)) {
+            return instructions.map(item => this._stringifyContentValue(item?.text ?? item)).filter(Boolean).join('\n');
+        }
+        return this._stringifyContentValue(instructions);
+    }
+
+    _extractResponsesImageUrl(part) {
+        if (!part) {
+            return '';
+        }
+        const image = part.image_url ?? part.url;
+        if (typeof image === 'string') {
+            return image;
+        }
+        return image?.url || '';
+    }
+
+    _dataUrlToClaudeImage(url) {
+        if (!url || typeof url !== 'string' || !url.startsWith('data:')) {
+            return null;
+        }
+        const match = url.match(/^data:([^;,]+)(?:;[^,]*)?;base64,(.*)$/s);
+        if (!match) {
+            return null;
+        }
+        return {
+            type: 'image',
+            source: {
+                type: 'base64',
+                media_type: match[1],
+                data: match[2]
+            }
+        };
+    }
+
+    _responsesContentToClaudeBlocks(content, role = 'user') {
+        if (content === null || content === undefined) {
+            return [];
+        }
+
+        if (typeof content === 'string') {
+            return content ? [{ type: 'text', text: content }] : [];
+        }
+
+        if (!Array.isArray(content)) {
+            const text = this._stringifyContentValue(content);
+            return text ? [{ type: 'text', text }] : [];
+        }
+
+        const blocks = [];
+        for (const part of content) {
+            if (!part) continue;
+            const partType = part.type;
+            if (partType === 'input_text' || partType === 'output_text' || partType === 'text') {
+                if (part.text !== undefined && part.text !== null) {
+                    blocks.push({ type: 'text', text: String(part.text) });
+                }
+                continue;
+            }
+            if (partType === 'refusal') {
+                const refusal = part.refusal ?? part.text;
+                if (refusal) {
+                    blocks.push({ type: 'text', text: String(refusal) });
+                }
+                continue;
+            }
+            if (partType === 'input_image' || partType === 'image_url') {
+                const url = this._extractResponsesImageUrl(part);
+                const imageBlock = this._dataUrlToClaudeImage(url);
+                if (imageBlock) {
+                    blocks.push(imageBlock);
+                } else if (url) {
+                    blocks.push({ type: 'text', text: `[Image: ${url}]` });
+                }
+                continue;
+            }
+            if (partType === 'input_file') {
+                const fileLabel = part.filename || part.file_id || part.file_url || 'file';
+                blocks.push({ type: 'text', text: `[File: ${fileLabel}]` });
+                continue;
+            }
+
+            const fallbackText = part.text ?? part.content;
+            if (fallbackText !== undefined && fallbackText !== null) {
+                blocks.push({ type: 'text', text: this._stringifyContentValue(fallbackText) });
+            }
+        }
+
+        return blocks;
+    }
+
+    _normalizeToolInput(argumentsValue) {
+        if (argumentsValue === null || argumentsValue === undefined || argumentsValue === '') {
+            return {};
+        }
+        const parsed = typeof argumentsValue === 'string' ? safeParseJSON(argumentsValue) : argumentsValue;
+        if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+            return parsed;
+        }
+        return { _raw_arguments: parsed };
+    }
+
+    _normalizeToolOutput(output) {
+        if (output === null || output === undefined) {
+            return '';
+        }
+        if (typeof output === 'string') {
+            return output;
+        }
+        return JSON.stringify(output);
+    }
+
+    _pushClaudeMessage(messages, role, blocks) {
+        if (!blocks || blocks.length === 0) {
+            return;
+        }
+        const normalizedRole = role === 'assistant' ? 'assistant' : 'user';
+        const last = messages[messages.length - 1];
+        if (last && last.role === normalizedRole && Array.isArray(last.content)) {
+            last.content.push(...blocks);
+            return;
+        }
+        messages.push({
+            role: normalizedRole,
+            content: blocks
+        });
+    }
+
+    _mapResponsesToolToClaude(tool) {
+        if (!tool || typeof tool !== 'object') {
+            return null;
+        }
+        if (tool.type && tool.type !== 'function') {
+            if (tool.type === 'web_search_preview' || tool.type === 'web_search') {
+                return {
+                    type: 'web_search_20250305',
+                    name: tool.name || 'web_search'
+                };
+            }
+            return null;
+        }
+
+        const fn = tool.function || {};
+        const name = tool.name || fn.name;
+        if (!name) {
+            return null;
+        }
+
+        return {
+            name,
+            description: tool.description || fn.description || '',
+            input_schema: cleanJsonSchemaForOpenAI(
+                tool.parameters || fn.parameters || tool.parametersJsonSchema || { type: 'object', properties: {} }
+            )
+        };
+    }
+
+    _mapResponsesToolChoiceToClaude(toolChoice) {
+        if (!toolChoice) {
+            return undefined;
+        }
+        if (typeof toolChoice === 'string') {
+            if (toolChoice === 'auto') return { type: 'auto' };
+            if (toolChoice === 'required') return { type: 'any' };
+            if (toolChoice === 'none') return { type: 'none' };
+            return undefined;
+        }
+        if (toolChoice.type === 'function') {
+            const name = toolChoice.name || toolChoice.function?.name;
+            return name ? { type: 'tool', name } : undefined;
+        }
+        return undefined;
+    }
+
+    _mapReasoningToClaudeThinking(reasoning) {
+        const effort = String(reasoning?.effort || '').toLowerCase().trim();
+        if (!effort) {
+            return undefined;
+        }
+        if (effort === 'none') {
+            return { type: 'disabled' };
+        }
+        const budgetByEffort = {
+            minimal: 1024,
+            low: 2048,
+            medium: 8192,
+            high: 20000,
+            xhigh: 32000,
+            max: 32000
+        };
+        return {
+            type: 'enabled',
+            budget_tokens: budgetByEffort[effort] || 20000
+        };
+    }
+
     /**
      * 将 OpenAI Responses 请求转换为 Claude 请求
      */
@@ -398,22 +616,15 @@ export class OpenAIResponsesConverter extends BaseConverter {
             stream: responsesRequest.stream || false
         };
 
-        // 处理 instructions 作为系统消息
-        if (responsesRequest.instructions) {
-            claudeRequest.system = responsesRequest.instructions;
+        const systemParts = [];
+        const normalizedInstructions = this._normalizeInstructions(responsesRequest.instructions);
+        if (normalizedInstructions) {
+            systemParts.push(normalizedInstructions);
         }
 
-        // 处理 reasoning effort
-        if (responsesRequest.reasoning?.effort) {
-            const effort = String(responsesRequest.reasoning.effort || '').toLowerCase().trim();
-            let budgetTokens = 20000;
-            if (effort === 'low') budgetTokens = 2048;
-            else if (effort === 'medium') budgetTokens = 8192;
-            else if (effort === 'high') budgetTokens = 20000;
-            claudeRequest.thinking = {
-                type: 'enabled',
-                budget_tokens: budgetTokens
-            };
+        const thinking = this._mapReasoningToClaudeThinking(responsesRequest.reasoning);
+        if (thinking) {
+            claudeRequest.thinking = thinking;
         }
 
         // 处理 input 数组中的消息
@@ -426,93 +637,91 @@ export class OpenAIResponsesConverter extends BaseConverter {
             }];
         }
 
-        if (input && Array.isArray(input)) {
-            input.forEach(item => {
+        const appendResponsesItems = (items) => {
+            items.forEach(item => {
+                if (!item) return;
                 const itemType = item.type || (item.role ? 'message' : '');
-                
+
                 switch (itemType) {
                     case 'message':
-                        const content = [];
-                        if (Array.isArray(item.content)) {
-                            item.content.forEach(c => {
-                                if (c.type === 'input_text' || c.type === 'output_text') {
-                                    content.push({ type: 'text', text: c.text });
-                                } else if (c.type === 'input_image') {
-                                    const url = c.image_url?.url || c.url;
-                                    if (url && url.startsWith('data:')) {
-                                        const [mediaInfo, data] = url.split(';base64,');
-                                        const mediaType = mediaInfo.replace('data:', '');
-                                        content.push({
-                                            type: 'image',
-                                            source: {
-                                                type: 'base64',
-                                                media_type: mediaType,
-                                                data: data
-                                            }
-                                        });
-                                    }
-                                }
-                            });
-                        } else if (typeof item.content === 'string') {
-                            content.push({ type: 'text', text: item.content });
+                        if (item.role === 'system' || item.role === 'developer') {
+                            const systemText = this._responsesContentToClaudeBlocks(item.content)
+                                .filter(block => block.type === 'text')
+                                .map(block => block.text)
+                                .join('\n');
+                            if (systemText) systemParts.push(systemText);
+                            break;
                         }
-                        
-                        if (content.length > 0) {
-                            claudeRequest.messages.push({
-                                role: item.role === 'assistant' ? 'assistant' : 'user',
-                                content: content.length === 1 && content[0].type === 'text' ? content[0].text : content
-                            });
-                        }
+                        this._pushClaudeMessage(
+                            claudeRequest.messages,
+                            item.role,
+                            this._responsesContentToClaudeBlocks(item.content, item.role)
+                        );
                         break;
-                    
+
                     case 'function_call':
-                        claudeRequest.messages.push({
-                            role: 'assistant',
-                            content: [{
+                        this._pushClaudeMessage(claudeRequest.messages, 'assistant', [{
                                 type: 'tool_use',
-                                id: item.call_id || `toolu_${uuidv4().replace(/-/g, '')}`,
+                                id: item.call_id || item.id || `toolu_${uuidv4().replace(/-/g, '')}`,
                                 name: item.name,
-                                input: typeof item.arguments === 'string' ? JSON.parse(item.arguments) : item.arguments
-                            }]
-                        });
+                                input: this._normalizeToolInput(item.arguments)
+                            }]);
                         break;
-                    
+
                     case 'function_call_output':
-                        claudeRequest.messages.push({
-                            role: 'user',
-                            content: [{
+                        this._pushClaudeMessage(claudeRequest.messages, 'user', [{
                                 type: 'tool_result',
                                 tool_use_id: item.call_id,
-                                content: item.output
-                            }]
-                        });
+                                content: this._normalizeToolOutput(item.output)
+                            }]);
+                        break;
+
+                    case 'reasoning':
+                        {
+                            const summary = Array.isArray(item.summary) ? item.summary : [];
+                            const thinkingText = summary
+                                .map(part => part?.text ?? part?.summary_text ?? '')
+                                .filter(Boolean)
+                                .join('\n');
+                            if (thinkingText) {
+                                this._pushClaudeMessage(claudeRequest.messages, 'assistant', [{
+                                    type: 'thinking',
+                                    thinking: thinkingText
+                                }]);
+                            }
+                        }
                         break;
                 }
             });
+        };
+
+        if (input && Array.isArray(input)) {
+            appendResponsesItems(input);
+        }
+
+        if (responsesRequest.messages && Array.isArray(responsesRequest.messages)) {
+            appendResponsesItems(responsesRequest.messages.map(message => ({
+                type: 'message',
+                role: message.role,
+                content: message.content
+            })));
+        }
+
+        if (systemParts.length > 0) {
+            claudeRequest.system = systemParts.join('\n');
         }
 
         // 处理工具
         if (responsesRequest.tools && Array.isArray(responsesRequest.tools)) {
-            claudeRequest.tools = responsesRequest.tools.map(tool => ({
-                name: tool.name,
-                description: tool.description,
-                input_schema: tool.parameters || tool.parametersJsonSchema || { type: 'object', properties: {} }
-            }));
+            const tools = responsesRequest.tools.map(tool => this._mapResponsesToolToClaude(tool)).filter(Boolean);
+            if (tools.length > 0) {
+                claudeRequest.tools = tools;
+            }
         }
 
-        if (responsesRequest.tool_choice) {
-            if (typeof responsesRequest.tool_choice === 'string') {
-                if (responsesRequest.tool_choice === 'auto') {
-                    claudeRequest.tool_choice = { type: 'auto' };
-                } else if (responsesRequest.tool_choice === 'required') {
-                    claudeRequest.tool_choice = { type: 'any' };
-                }
-            } else if (responsesRequest.tool_choice.type === 'function') {
-                claudeRequest.tool_choice = {
-                    type: 'tool',
-                    name: responsesRequest.tool_choice.function.name
-                };
-            }
+        const toolChoice = this._mapResponsesToolChoiceToClaude(responsesRequest.tool_choice);
+        if (toolChoice) {
+            claudeRequest.tool_choice = toolChoice;
         }
 
         return claudeRequest;
@@ -524,31 +733,46 @@ export class OpenAIResponsesConverter extends BaseConverter {
     toClaudeResponse(responsesResponse, model) {
         const content = [];
         let stop_reason = 'end_turn';
+        let messageId = null;
 
         if (responsesResponse.output && Array.isArray(responsesResponse.output)) {
             responsesResponse.output.forEach(item => {
                 if (item.type === 'message') {
-                    const text = item.content
-                        ?.filter(c => c.type === 'output_text')
-                        .map(c => c.text)
-                        .join('') || '';
-                    if (text) {
-                        content.push({ type: 'text', text: text });
+                    if (!messageId && item.id) {
+                        messageId = item.id;
+                    }
+                    for (const block of this._responsesContentToClaudeBlocks(item.content, 'assistant')) {
+                        if (block.type === 'text') {
+                            content.push(block);
+                        }
                     }
                 } else if (item.type === 'function_call') {
                     content.push({
                         type: 'tool_use',
-                        id: item.call_id,
+                        id: item.call_id || item.id || `toolu_${uuidv4().replace(/-/g, '')}`,
                         name: item.name,
-                        input: typeof item.arguments === 'string' ? JSON.parse(item.arguments) : item.arguments
+                        input: this._normalizeToolInput(item.arguments)
                     });
                     stop_reason = 'tool_use';
+                } else if (item.type === 'reasoning') {
+                    const summary = Array.isArray(item.summary) ? item.summary : [];
+                    const thinking = summary
+                        .map(part => part?.text ?? part?.summary_text ?? '')
+                        .filter(Boolean)
+                        .join('\n');
+                    if (thinking) {
+                        content.push({ type: 'thinking', thinking });
+                    }
                 }
             });
         }
 
+        if (responsesResponse.status === 'incomplete') {
+            stop_reason = 'max_tokens';
+        }
+
         return {
-            id: responsesResponse.id || `msg_${Date.now()}`,
+            id: messageId || responsesResponse.id || `msg_${uuidv4().replace(/-/g, '')}`,
             type: 'message',
             role: 'assistant',
             content: content,
@@ -562,10 +786,42 @@ export class OpenAIResponsesConverter extends BaseConverter {
         };
     }
 
+    _getClaudeStreamState(requestId) {
+        const key = requestId || 'default';
+        if (!this.claudeStreamStates.has(key)) {
+            this.claudeStreamStates.set(key, {
+                textBlocks: new Set(),
+                toolBlocks: new Set(),
+                reasoningBlocks: new Set(),
+                stoppedBlocks: new Set(),
+                stopReason: 'end_turn',
+                usage: null
+            });
+        }
+        return this.claudeStreamStates.get(key);
+    }
+
+    _mapResponsesUsageToClaude(usage = {}) {
+        return {
+            input_tokens: usage.input_tokens || 0,
+            output_tokens: usage.output_tokens || 0,
+            cache_read_input_tokens: usage.input_tokens_details?.cached_tokens || 0
+        };
+    }
+
+    _normalizeClaudeStreamIndex(chunk) {
+        return chunk.output_index ?? chunk.content_index ?? 0;
+    }
+
     /**
      * 将 OpenAI Responses 流式块转换为 Claude 流式块
      */
-    toClaudeStreamChunk(responsesChunk, model) {
+    toClaudeStreamChunk(responsesChunk, model, requestId = null) {
+        if (!responsesChunk) {
+            return null;
+        }
+        const state = this._getClaudeStreamState(requestId);
+
         if (responsesChunk.type === 'response.created') {
             return {
                 type: 'message_start',
@@ -574,20 +830,102 @@ export class OpenAIResponsesConverter extends BaseConverter {
                     type: 'message',
                     role: 'assistant',
                     content: [],
-                    model: model || responsesChunk.response.model
+                    model: model || responsesChunk.response.model,
+                    usage: {
+                        input_tokens: 0,
+                        output_tokens: 0
+                    }
                 }
             };
         }
 
+        if (responsesChunk.type === 'response.content_part.added') {
+            const index = this._normalizeClaudeStreamIndex(responsesChunk);
+            if (responsesChunk.part?.type === 'output_text' && !state.textBlocks.has(index)) {
+                state.textBlocks.add(index);
+                return {
+                    type: 'content_block_start',
+                    index,
+                    content_block: {
+                        type: 'text',
+                        text: ''
+                    }
+                };
+            }
+        }
+
         if (responsesChunk.type === 'response.output_text.delta') {
-            return {
+            const index = this._normalizeClaudeStreamIndex(responsesChunk);
+            const events = [];
+            if (!state.textBlocks.has(index)) {
+                state.textBlocks.add(index);
+                events.push({
+                    type: 'content_block_start',
+                    index,
+                    content_block: {
+                        type: 'text',
+                        text: ''
+                    }
+                });
+            }
+            events.push({
                 type: 'content_block_delta',
-                index: 0,
+                index,
                 delta: {
                     type: 'text_delta',
-                    text: responsesChunk.delta
+                    text: responsesChunk.delta || ''
                 }
-            };
+            });
+            return events;
+        }
+
+        if (responsesChunk.type === 'response.output_text.done' || responsesChunk.type === 'response.content_part.done') {
+            const index = this._normalizeClaudeStreamIndex(responsesChunk);
+            if (!state.stoppedBlocks.has(`text:${index}`)) {
+                state.stoppedBlocks.add(`text:${index}`);
+                return {
+                    type: 'content_block_stop',
+                    index
+                };
+            }
+            return null;
+        }
+
+        if (responsesChunk.type === 'response.reasoning_summary_text.delta') {
+            const index = this._normalizeClaudeStreamIndex(responsesChunk);
+            const events = [];
+            if (!state.reasoningBlocks.has(index)) {
+                state.reasoningBlocks.add(index);
+                events.push({
+                    type: 'content_block_start',
+                    index,
+                    content_block: {
+                        type: 'thinking',
+                        thinking: ''
+                    }
+                });
+            }
+            events.push({
+                type: 'content_block_delta',
+                index,
+                delta: {
+                    type: 'thinking_delta',
+                    thinking: responsesChunk.delta || ''
+                }
+            });
+            return events;
+        }
+
+        if (responsesChunk.type === 'response.reasoning_summary_text.done') {
+            const index = this._normalizeClaudeStreamIndex(responsesChunk);
+            if (!state.stoppedBlocks.has(`reasoning:${index}`)) {
+                state.stoppedBlocks.add(`reasoning:${index}`);
+                return {
+                    type: 'content_block_stop',
+                    index
+                };
+            }
+            return null;
         }
 
         if (responsesChunk.type === 'response.function_call_arguments.delta') {
@@ -601,23 +939,104 @@ export class OpenAIResponsesConverter extends BaseConverter {
             };
         }
 
+        if (responsesChunk.type === 'response.function_call_arguments.done') {
+            const index = responsesChunk.output_index || 0;
+            if (!state.stoppedBlocks.has(`tool:${index}`)) {
+                state.stoppedBlocks.add(`tool:${index}`);
+                return {
+                    type: 'content_block_stop',
+                    index
+                };
+            }
+            return null;
+        }
+
         if (responsesChunk.type === 'response.output_item.added' && responsesChunk.item?.type === 'function_call') {
+            state.stopReason = 'tool_use';
+            state.toolBlocks.add(responsesChunk.output_index || 0);
             return {
                 type: 'content_block_start',
                 index: responsesChunk.output_index || 0,
                 content_block: {
                     type: 'tool_use',
-                    id: responsesChunk.item.call_id,
+                    id: responsesChunk.item.call_id || responsesChunk.item.id,
                     name: responsesChunk.item.name,
                     input: {}
                 }
             };
         }
 
+        if (responsesChunk.type === 'response.output_item.done' && responsesChunk.item?.type === 'function_call') {
+            const index = responsesChunk.output_index || 0;
+            state.stopReason = 'tool_use';
+            if (!state.toolBlocks.has(index)) {
+                state.toolBlocks.add(index);
+                state.stoppedBlocks.add(`tool:${index}`);
+                const args = this._stringifyContentValue(this._normalizeToolInput(responsesChunk.item.arguments));
+                return [
+                    {
+                        type: 'content_block_start',
+                        index,
+                        content_block: {
+                            type: 'tool_use',
+                            id: responsesChunk.item.call_id || responsesChunk.item.id,
+                            name: responsesChunk.item.name,
+                            input: {}
+                        }
+                    },
+                    {
+                        type: 'content_block_delta',
+                        index,
+                        delta: {
+                            type: 'input_json_delta',
+                            partial_json: args
+                        }
+                    },
+                    {
+                        type: 'content_block_stop',
+                        index
+                    }
+                ];
+            }
+            if (!state.stoppedBlocks.has(`tool:${index}`)) {
+                state.stoppedBlocks.add(`tool:${index}`);
+                return {
+                    type: 'content_block_stop',
+                    index
+                };
+            }
+            return null;
+        }
+
+        if (responsesChunk.type === 'response.output_item.done' && responsesChunk.item?.type === 'message') {
+            return null;
+        }
+
+        if (responsesChunk.type === 'response.completed' && responsesChunk.response?.usage) {
+            state.usage = this._mapResponsesUsageToClaude(responsesChunk.response.usage);
+        }
+
+        if (responsesChunk.type === 'response.completed' && Array.isArray(responsesChunk.response?.output)) {
+            if (responsesChunk.response.output.some(item => item.type === 'function_call')) {
+                state.stopReason = 'tool_use';
+            }
+        }
+
         if (responsesChunk.type === 'response.completed') {
-            return {
-                type: 'message_stop'
-            };
+            const usage = state.usage || this._mapResponsesUsageToClaude(responsesChunk.response?.usage || {});
+            this.claudeStreamStates.delete(requestId || 'default');
+            return [
+                {
+                    type: 'message_delta',
+                    delta: {
+                        stop_reason: state.stopReason
+                    },
+                    usage
+                },
+                {
+                    type: 'message_stop'
+                }
+            ];
         }
 
         return null;

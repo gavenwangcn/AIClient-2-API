@@ -3,13 +3,16 @@ import { atomicWriteFile, withFileLock } from '../utils/file-lock.js';
 import logger from '../utils/logger.js';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { exec } from 'child_process';
+import { exec, execFile } from 'child_process';
 import { promisify } from 'util';
+import axios from 'axios';
 import { CONFIG } from '../core/config-manager.js';
 import { parseProxyUrl } from '../utils/proxy-utils.js';
 import { getRequestBody } from '../utils/common.js';
+import { isValidVersionTag } from '../utils/version-tag.js';
 
 const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 const GITHUB_REPO = 'justlovemaki/AIClient2API';
 
 function buildGitHubApiCandidates(repo) {
@@ -39,7 +42,8 @@ function buildGitHubApiCandidates(repo) {
 }
 
 function buildTarballCandidates(repo, tag) {
-    const githubTarballPath = `${repo}/archive/refs/tags/${tag}.tar.gz`;
+    const safeTag = encodeURIComponent(tag);
+    const githubTarballPath = `${repo}/archive/refs/tags/${safeTag}.tar.gz`;
     return [
         {
             name: 'gh-proxy.org',
@@ -88,39 +92,51 @@ function getUpdateProxyConfig() {
  */
 async function fetchWithProxy(url, options = {}) {
     const proxyConfig = getUpdateProxyConfig();
-    
-    if (proxyConfig) {
-        // 使用 undici 的 fetch 支持代理
-        const fetchOptions = {
-            ...options,
-            dispatcher: undefined
+
+    const method = options.method || 'GET';
+    const headers = options.headers || {};
+    const timeout = options.timeout || 0;
+    const responseType = options.responseType || 'arraybuffer';
+    const maxRedirects = options.redirect === 'manual' ? 0 : 5;
+
+    try {
+        const axiosOptions = {
+            method,
+            url,
+            headers,
+            data: options.body,
+            timeout,
+            responseType,
+            maxRedirects,
+            validateStatus: () => true
         };
-        
-        // 根据 URL 协议选择合适的 agent
-        const urlObj = new URL(url);
-        if (urlObj.protocol === 'https:') {
-            fetchOptions.agent = proxyConfig.httpsAgent;
-        } else {
-            fetchOptions.agent = proxyConfig.httpAgent;
+
+        if (proxyConfig) {
+            const urlObj = new URL(url);
+            axiosOptions.httpAgent = urlObj.protocol === 'https:' ? proxyConfig.httpsAgent : proxyConfig.httpAgent;
+            axiosOptions.httpsAgent = proxyConfig.httpsAgent;
+            axiosOptions.proxy = false;
         }
-        
-        // Node.js 原生 fetch 不直接支持 agent，需要使用 undici 或 node-fetch
-        // 这里使用动态导入 undici 来支持代理
-        try {
-            const { fetch: undiciFetch, ProxyAgent } = await import('undici');
-            const proxyAgent = new ProxyAgent(CONFIG.PROXY_URL);
-            return await undiciFetch(url, {
-                ...options,
-                dispatcher: proxyAgent
-            });
-        } catch (importError) {
-            // 如果 undici 不可用，回退到原生 fetch（不使用代理）
-            logger.warn('[Update] undici not available, falling back to native fetch without proxy');
-            return await fetch(url, options);
-        }
+
+        const response = await axios.request(axiosOptions);
+        const payloadBuffer = Buffer.isBuffer(response.data)
+            ? response.data
+            : Buffer.from(response.data || '');
+
+        return {
+            ok: response.status >= 200 && response.status < 300,
+            status: response.status,
+            statusText: response.statusText,
+            async json() {
+                return JSON.parse(payloadBuffer.toString('utf8'));
+            },
+            async arrayBuffer() {
+                return payloadBuffer;
+            }
+        };
+    } catch (error) {
+        throw error;
     }
-    
-    return await fetch(url, options);
 }
 
 /**
@@ -183,7 +199,7 @@ async function getVersionsFromGitHub(limit = 10) {
             // 提取版本号并排序
             const versions = tags
                 .map(tag => tag.name)
-                .filter(name => /^v?\d+\.\d+/.test(name));
+                .filter(isValidVersionTag);
             
             if (versions.length === 0) {
                 logger.warn(`[Update] No valid version tags found via ${candidate.name}`);
@@ -265,7 +281,7 @@ export async function checkForUpdates() {
             try {
                 // 获取最近的 10 个 tag
                 const { stdout } = await execAsync('git tag --sort=-v:refname');
-                const tags = stdout.trim().split('\n').filter(t => t);
+                const tags = stdout.trim().split('\n').filter(isValidVersionTag);
                 if (tags.length > 0) {
                     availableVersions = tags.slice(0, 10);
                     latestTag = availableVersions[0];
@@ -317,6 +333,11 @@ export async function checkForUpdates() {
  * @returns {Promise<Object>} 更新结果
  */
 export async function performUpdate(targetTag = null) {
+    if (targetTag !== null) {
+        if (!isValidVersionTag(targetTag)) {
+            throw new Error('Invalid version tag format');
+        }
+    }
     // 首先检查是否有更新
     const updateInfo = await checkForUpdates();
     
@@ -327,6 +348,9 @@ export async function performUpdate(targetTag = null) {
     // 如果未提供 targetTag，使用最新版本
     const latestTag = updateInfo.latestVersion;
     const finalTag = targetTag || latestTag;
+    if (!isValidVersionTag(finalTag)) {
+        throw new Error('Invalid version tag format');
+    }
     
     // 如果是更新到最新版本，且当前已是最新版本
     if (!targetTag && !updateInfo.hasUpdate) {
@@ -374,7 +398,7 @@ export async function performUpdate(targetTag = null) {
     // 执行 checkout 到目标 tag
     try {
         logger.info(`[Update] Checking out to ${finalTag}...`);
-        await execAsync(`git checkout ${finalTag}`);
+        await execFileAsync('git', ['checkout', finalTag]);
     } catch (error) {
         logger.error('[Update] Failed to checkout:', error.message);
         throw new Error(`Failed to switch to version ${finalTag}: ` + error.message);
@@ -397,11 +421,15 @@ export async function performUpdate(targetTag = null) {
     try {
         // 确保本地版本号有 v 前缀，以匹配 git tag 格式
         const localVersionTag = updateInfo.localVersion.startsWith('v') ? updateInfo.localVersion : `v${updateInfo.localVersion}`;
-        const { stdout: diffOutput } = await execAsync(`git diff ${localVersionTag}..${finalTag} --name-only`);
-        if (diffOutput.includes('package.json') || diffOutput.includes('package-lock.json')) {
-            logger.info('[Update] package.json changed, running npm install...');
-            await execAsync('npm install');
-            needsRestart = true;
+        if (isValidVersionTag(localVersionTag) && isValidVersionTag(finalTag)) {
+            const { stdout: diffOutput } = await execFileAsync('git', ['diff', `${localVersionTag}..${finalTag}`, '--name-only']);
+            if (diffOutput.includes('package.json') || diffOutput.includes('package-lock.json')) {
+                logger.info('[Update] package.json changed, running npm install...');
+                await execAsync('npm install');
+                needsRestart = true;
+            }
+        } else {
+            logger.warn('[Update] Skipping package change check due to invalid version tag');
         }
     } catch (error) {
         logger.warn('[Update] Failed to check package changes:', error.message);
@@ -484,7 +512,7 @@ async function performTarballUpdate(localVersion, latestTag) {
         
         // 3. 解压 tarball
         logger.info('[Update] Extracting tarball...');
-        await execAsync(`tar -xzf "${tarballPath}" -C "${tempDir}"`);
+        await execFileAsync('tar', ['-xzf', tarballPath, '-C', tempDir]);
         
         // 4. 找到解压后的目录（格式通常是 repo-name-tag）
         const extractedItems = await fs.readdir(tempDir);

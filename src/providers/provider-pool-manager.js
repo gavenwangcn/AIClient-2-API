@@ -51,6 +51,7 @@ export class ProviderPoolManager {
         'gemini-cli-oauth': 'gemini-3.5-flash',
         'gemini-antigravity': 'gemini-3.5-flash-medium',
         'openai-custom': 'gpt-4o-mini',
+        'atlascloud': 'gpt-4o-mini',
         'claude-custom': 'claude-3-7-sonnet-20250219',
         'claude-kiro-oauth': 'claude-haiku-4-5',
         'openai-qwen-oauth': 'qwen3-coder-flash',
@@ -59,6 +60,7 @@ export class ProviderPoolManager {
         'openaiResponses-custom': 'gpt-4o-mini',
         'forward-api': 'gpt-4o-mini',
         'consensus-mcp-oauth': 'consensus-paper-search',
+        'grok-cli-oauth': 'grok-3-mini',
         'grok-web': 'grok-4.1-mini',
     };
 
@@ -157,6 +159,8 @@ export class ProviderPoolManager {
                     configPath = config.IFLOW_OAUTH_CREDS_FILE_PATH;
                 } else if (providerType.startsWith('openai-codex')) {
                     configPath = config.CODEX_OAUTH_CREDS_FILE_PATH;
+                } else if (providerType.startsWith('grok-cli')) {
+                    configPath = config.GROK_CLI_OAUTH_CREDS_FILE_PATH;
                 }
                 
                 // logger.info(`Checking node ${this._getDisplayName(config)} (${providerType}) expiry date... configPath: ${configPath}`);

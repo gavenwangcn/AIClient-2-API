@@ -8,7 +8,7 @@ import os from 'os';
 import {refreshCodexTokensWithRetry} from '../../auth/oauth-handlers.js';
 import {getProviderPoolManager} from '../../services/service-manager.js';
 import {configureTLSSidecar, isTLSSidecarEnabledForProvider} from '../../utils/proxy-utils.js';
-import {MODEL_PROVIDER, formatExpiryLog} from '../../utils/common.js';
+import {MODEL_PROVIDER, formatExpiryLog, normalizeProviderErrorMessage} from '../../utils/common.js';
 import {getProxyConfigForProvider} from '../../utils/proxy-utils.js';
 import {getProviderModels} from '../provider-models.js';
 
@@ -33,6 +33,7 @@ export class CodexApiService {
         this.idToken = null;
         this.last_refresh = null;
         this.credsPath = null; // 记录本次加载/使用的凭据文件路径，确保刷新后写回同一文件
+        this.accessTokenOnlyRefreshLogged = false;
         this.uuid = config.uuid; // 保存 uuid 用于号池管理
         this.isInitialized = false;
 
@@ -138,6 +139,10 @@ export class CodexApiService {
         // 注意：在 V2 架构下，此方法主要由 PoolManager 的后台队列调用
         if (needsRefresh || !this.accessToken) {
             if (!this.refreshToken) {
+                if (this.accessToken) {
+                    this.logAccessTokenOnlyRefreshSkipped();
+                    return;
+                }
                 throw new Error('Codex credentials not found. Please authenticate first using OAuth.');
             }
             logger.info('[Codex] Token expiring soon or refresh requested, refreshing...');
@@ -149,6 +154,11 @@ export class CodexApiService {
      * 后台异步刷新 token（不阻塞当前请求）
      */
     triggerBackgroundRefresh() {
+        if (!this.refreshToken) {
+            this.logAccessTokenOnlyRefreshSkipped();
+            return;
+        }
+
         const poolManager = getProviderPoolManager();
         if (poolManager && this.uuid) {
             logger.info(`[Codex] Token is near expiry, marking credential ${this.uuid} for background refresh`);
@@ -156,6 +166,12 @@ export class CodexApiService {
                 uuid: this.uuid
             });
         }
+    }
+
+    logAccessTokenOnlyRefreshSkipped() {
+        if (this.accessTokenOnlyRefreshLogged) return;
+        this.accessTokenOnlyRefreshLogged = true;
+        logger.warn('[Codex] Access-token-only credential cannot be refreshed because refresh_token is empty. Re-import or re-authenticate when it expires.');
     }
 
     /**
@@ -212,6 +228,7 @@ export class CodexApiService {
         } catch (error) {
             if (error.response?.status === 401) {
                 logger.info('[Codex] Received 401. Triggering background refresh...');
+                await normalizeProviderErrorMessage(error, { status: 401, context: 'non-stream' });
 
                 // 触发后台异步刷新
                 this.triggerBackgroundRefresh();
@@ -222,8 +239,10 @@ export class CodexApiService {
                 error.skipErrorCount = true;
                 throw error;
             } else {
-                const errBody = error.response?.data ? String(error.response.data).slice(0, 500) : '';
-                logger.error(`[Codex] Error calling non-stream API (Status: ${error.response?.status}, Code: ${error.code || 'N/A'}): ${error.message}${errBody ? ` | body: ${errBody}` : ''}`);
+                if (error.response?.status) {
+                    await normalizeProviderErrorMessage(error, { status: error.response.status, context: 'non-stream' });
+                }
+                logger.error(`[Codex] Error calling non-stream API (Status: ${error.response?.status}, Code: ${error.code || 'N/A'}): ${error.message}`);
                 throw error;
             }
         }
@@ -283,6 +302,7 @@ export class CodexApiService {
         } catch (error) {
             if (error.response?.status === 401) {
                 logger.info('[Codex] Received 401 during stream. Triggering background refresh...');
+                await normalizeProviderErrorMessage(error, { status: 401, context: 'stream' });
 
                 // 触发后台异步刷新
                 this.triggerBackgroundRefresh();
@@ -293,6 +313,9 @@ export class CodexApiService {
                 error.skipErrorCount = true;
                 throw error;
             } else {
+                if (error.response?.status) {
+                    await normalizeProviderErrorMessage(error, { status: error.response.status, context: 'stream' });
+                }
                 logger.error(`[Codex] Error calling streaming API (Status: ${error.response?.status}, Code: ${error.code || 'N/A'}):`, error.message);
                 throw error;
             }
@@ -460,6 +483,11 @@ export class CodexApiService {
      * 刷新访问令牌
      */
     async refreshAccessToken() {
+        if (!this.refreshToken) {
+            this.logAccessTokenOnlyRefreshSkipped();
+            throw new Error('Cannot refresh Codex access-token-only credential without refresh_token.');
+        }
+
         try {
             const newTokens = await refreshCodexTokensWithRetry(this.refreshToken, this.config);
 
@@ -531,7 +559,7 @@ export class CodexApiService {
 
         // 3) 兜底：写入 configs/codex（与 OAuth 保存默认目录保持一致，避免“读取 configs/codex、写入 .codex”导致永远读到旧 token）
         const projectDir = process.cwd();
-        return path.join(projectDir, 'configs', 'codex', `${Date.now()}_codex-${email}.json`);
+        return path.join(projectDir, 'configs', 'codex', `${Date.now()}_codex-${email}_oauth_creds.json`);
     }
 
     /**

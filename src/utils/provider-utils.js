@@ -74,7 +74,7 @@ export const PROVIDER_MAPPINGS = [
         patterns: ['configs/codex/', '/codex/', '/.codex/'],
         providerType: 'openai-codex-oauth',
         credPathKey: 'CODEX_OAUTH_CREDS_FILE_PATH',
-        defaultCheckModel: 'gpt-5.2-codex',
+        defaultCheckModel: 'gpt-5.4',
         displayName: 'OpenAI Codex OAuth',
         needsProjectId: false,
         urlKeys: ['CODEX_BASE_URL']
@@ -91,6 +91,17 @@ export const PROVIDER_MAPPINGS = [
         urlKeys: ['CONSENSUS_MCP_URL', 'CONSENSUS_MCP_SERVER_NAME']
     },
     {
+        // Grok CLI OAuth 配置
+        dirName: 'grok-cli',
+        patterns: ['configs/grok-cli/', '/grok-cli/', '/.grok-cli/'],
+        providerType: 'grok-cli-oauth',
+        credPathKey: 'GROK_CLI_OAUTH_CREDS_FILE_PATH',
+        defaultCheckModel: 'grok-3-mini',
+        displayName: 'Grok CLI OAuth',
+        needsProjectId: false,
+        urlKeys: ['GROK_CLI_BASE_URL']
+    },
+    {
         // Grok Web 配置
         dirName: 'grok',
         patterns: ['configs/grok/', '/grok/'],
@@ -99,47 +110,7 @@ export const PROVIDER_MAPPINGS = [
         defaultCheckModel: 'grok-4.1-mini',
         displayName: 'Grok Web',
         needsProjectId: false,
-        urlKeys: ['GROK_BASE_URL', 'GROK_CF_CLEARANCE', 'GROK_USER_AGENT']
-    },
-    {
-        dirName: 'openai-custom',
-        patterns: ['configs/openai-custom/', '/openai-custom/'],
-        providerType: 'openai-custom',
-        credPathKey: 'OPENAI_API_KEY',
-        defaultCheckModel: 'gpt-4o',
-        displayName: 'OpenAI Custom',
-        needsProjectId: false,
-        urlKeys: ['OPENAI_BASE_URL']
-    },
-    {
-        dirName: 'claude-custom',
-        patterns: ['configs/claude-custom/', '/claude-custom/'],
-        providerType: 'claude-custom',
-        credPathKey: 'CLAUDE_API_KEY',
-        defaultCheckModel: 'claude-sonnet-4-5',
-        displayName: 'Claude Custom',
-        needsProjectId: false,
-        urlKeys: ['CLAUDE_BASE_URL']
-    },
-    {
-        dirName: 'openai-responses',
-        patterns: ['configs/openai-responses/', '/openai-responses/'],
-        providerType: 'openaiResponses-custom',
-        credPathKey: 'OPENAI_API_KEY',
-        defaultCheckModel: 'gpt-4o',
-        displayName: 'OpenAI Responses',
-        needsProjectId: false,
-        urlKeys: ['OPENAI_BASE_URL']
-    },
-    {
-        dirName: 'forward',
-        patterns: ['configs/forward/', '/forward/'],
-        providerType: 'forward-api',
-        credPathKey: 'FORWARD_BASE_URL',
-        defaultCheckModel: 'gpt-4o-mini',
-        displayName: 'Forward API',
-        needsProjectId: false,
-        urlKeys: ['FORWARD_BASE_URL', 'FORWARD_API_KEY']
+        urlKeys: ['GROK_BASE_URL', 'GROK_CF_CLEARANCE', 'GROK_CF_BM', 'GROK_USER_AGENT', 'GROK_STATSIG_ID']
     }
 ];
 

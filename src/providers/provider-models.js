@@ -47,13 +47,18 @@ export const PROVIDER_MODELS = {
         'gemini-3.1-flash-lite-preview',
         'gemini-3-flash-preview',
         'gemini-3-pro-preview',
+        'gemini-2.5-flash',
+        'gemini-2.5-flash-lite',
+        'gemini-2.5-pro',
     ],
     'gemini-antigravity': [
         'gemini-3.5-flash',
+        'gemini-3.5-flash-low',
         'gemini-3.5-flash-high',
         'gemini-3.5-flash-medium',
-        'gemini-3.1-pro-high',
+        'gemini-3-flash',
         'gemini-3.1-pro-low',
+        'gemini-3.1-pro-high',
         'gemini-3.1-flash-image',
         'gemini-claude-sonnet-4-6',
         'gemini-claude-opus-4-6-thinking',
@@ -62,6 +67,7 @@ export const PROVIDER_MODELS = {
     'claude-kiro-oauth': [
         'claude-haiku-4-5',
         'claude-haiku-4-5-20251001',
+        'claude-opus-4-8',
         'claude-opus-4-7',
         'claude-opus-4-6',
         'claude-sonnet-4-6',
@@ -71,6 +77,7 @@ export const PROVIDER_MODELS = {
         'claude-sonnet-4-5-20250929',
     ],
     'openai-custom': [],
+    'atlascloud': [],
     'openaiResponses-custom': [],
     'openai-qwen-oauth': [
         'coder-model',
@@ -107,13 +114,29 @@ export const PROVIDER_MODELS = {
         'minimax-m2.5',
     ],
     'openai-codex-oauth': [
-        'gpt-5.2',
-        'gpt-5.3-codex',
         'gpt-5.3-codex-spark',
         'gpt-5.4',
         'gpt-5.4-mini',
         'gpt-5.5',
         'gpt-image-2',
+    ],
+    'grok-cli-oauth': [
+        'grok-build-0.1',
+        'grok-imagine-image-quality',
+        'grok-imagine-image',
+        'grok-imagine-image-pro',
+        'grok-imagine-video',
+        'grok-imagine-video-1.5-preview',
+        'grok-imagine-video-1.5-2026-05-30',
+        'grok-4.3',
+        'grok-4.20-0309-reasoning',
+        'grok-4.20-0309-non-reasoning',
+        'grok-4.20-multi-agent-0309',
+        'grok-3-mini',
+        'grok-3-mini-fast',
+        'grok-4',
+        'grok-4-fast',
+        'grok-3'
     ],
     'forward-api': [],
     'consensus-mcp-oauth': [
@@ -137,7 +160,8 @@ export const PROVIDER_MODELS = {
 export const MANAGED_MODEL_LIST_PROVIDERS = [
     'openai-custom',
     'openaiResponses-custom',
-    'claude-custom'
+    'claude-custom',
+    'atlascloud'
 ];
 
 export function getManagedModelListProviderType(providerType) {

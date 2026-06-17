@@ -1118,6 +1118,12 @@ function detectProviderFromPath(filePath) {
             shortName: 'consensus-mcp'
         },
         {
+            patterns: ['configs/grok-cli/', '/grok-cli/'],
+            providerType: 'grok-cli-oauth',
+            displayName: 'Grok CLI OAuth',
+            shortName: 'grok-cli-oauth'
+        },
+        {
             patterns: ['configs/iflow/', '/iflow/'],
             providerType: 'openai-iflow',
             displayName: 'OpenAI iFlow OAuth',

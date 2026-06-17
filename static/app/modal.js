@@ -4,7 +4,7 @@ import { escapeHtml, showToast, getFieldLabel, getProviderTypeFields } from './u
 import { handleProviderPasswordToggle } from './event-handlers.js';
 import { t } from './i18n.js';
 
-const MANAGED_MODEL_LIST_PROVIDERS = new Set(['openai-custom', 'openaiResponses-custom', 'claude-custom']);
+const MANAGED_MODEL_LIST_PROVIDERS = new Set(['openai-custom', 'openaiResponses-custom', 'claude-custom', 'atlascloud']);
 
 // 分页配置
 const PROVIDERS_PER_PAGE = 5;
@@ -572,6 +572,7 @@ function getFilteredProviders() {
             p.ANTIGRAVITY_OAUTH_CREDS_FILE_PATH,
             p.IFLOW_OAUTH_CREDS_FILE_PATH,
             p.CODEX_OAUTH_CREDS_FILE_PATH,
+            p.GROK_CLI_OAUTH_CREDS_FILE_PATH,
             p.GROK_COOKIE_TOKEN,
             p.FORWARD_API_KEY,
             p.checkModelName
@@ -1273,6 +1274,8 @@ function getFieldOrder(provider) {
             providerType = 'openai-codex-oauth';
         } else if (provider.CONSENSUS_MCPORTER_CONFIG_PATH) {
             providerType = 'consensus-mcp-oauth';
+        } else if (provider.GROK_CLI_OAUTH_CREDS_FILE_PATH) {
+            providerType = 'grok-cli-oauth';
         } else if (provider.GROK_COOKIE_TOKEN) {
             providerType = 'grok-web';
         } else if (provider.FORWARD_API_KEY) {

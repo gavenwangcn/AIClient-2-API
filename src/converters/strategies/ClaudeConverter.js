@@ -957,23 +957,32 @@ export class ClaudeConverter extends BaseConverter {
                                     try {
                                         const parsedArgs = JSON.parse(args);
                                         if (parsedArgs && typeof parsedArgs === 'object') {
+                                            const fc = {
+                                                name: block.name,
+                                                args: parsedArgs
+                                            };
+                                            // 保留 tool_use.id，Antigravity 转 Claude 时必需此字段
+                                            if (block.id) {
+                                                fc.id = block.id;
+                                            }
                                             parts.push({
                                                 thoughtSignature: ClaudeConverter.GEMINI_CLAUDE_THOUGHT_SIGNATURE,
-                                                functionCall: {
-                                                    name: block.name,
-                                                    args: parsedArgs
-                                                }
+                                                functionCall: fc
                                             });
                                         }
                                     } catch (e) {
                                         // 如果解析失败，尝试直接使用 input
                                         if (block.input && typeof block.input === 'object') {
+                                            const fc = {
+                                                name: block.name,
+                                                args: block.input
+                                            };
+                                            if (block.id) {
+                                                fc.id = block.id;
+                                            }
                                             parts.push({
                                                 thoughtSignature: ClaudeConverter.GEMINI_CLAUDE_THOUGHT_SIGNATURE,
-                                                functionCall: {
-                                                    name: block.name,
-                                                    args: block.input
-                                                }
+                                                functionCall: fc
                                             });
                                         }
                                     }
@@ -1022,6 +1031,8 @@ export class ClaudeConverter extends BaseConverter {
                                     parts.push({
                                         functionResponse: {
                                             name: funcName,
+                                            // 保留原始 tool_use_id，Antigravity 转 Claude tool_result 时必需
+                                            id: toolCallId,
                                             response: {
                                                 result: responseData
                                             }
@@ -1569,34 +1580,201 @@ export class ClaudeConverter extends BaseConverter {
     // Claude -> OpenAI Responses 转换
     // =========================================================================
 
+    _stringifyContentValue(value) {
+        if (value === null || value === undefined) {
+            return '';
+        }
+        if (typeof value === 'string') {
+            return value;
+        }
+        return JSON.stringify(value);
+    }
+
+    _normalizeClaudeSystem(system) {
+        if (!system) {
+            return '';
+        }
+        if (typeof system === 'string') {
+            return system;
+        }
+        if (Array.isArray(system)) {
+            return system
+                .map(part => typeof part === 'string' ? part : (part?.text ?? this._stringifyContentValue(part)))
+                .filter(Boolean)
+                .join('\n');
+        }
+        return this._stringifyContentValue(system);
+    }
+
+    _claudeImageToResponsesPart(block) {
+        const source = block?.source || {};
+        const data = source.data || source.base64;
+        const mediaType = source.media_type || source.mime_type || 'image/jpeg';
+        if (data) {
+            return {
+                type: 'input_image',
+                image_url: {
+                    url: `data:${mediaType};base64,${data}`
+                }
+            };
+        }
+        if (source.url) {
+            return {
+                type: 'input_image',
+                image_url: {
+                    url: source.url
+                }
+            };
+        }
+        return null;
+    }
+
+    _pushResponsesMessage(input, role, content) {
+        if (!content || content.length === 0) {
+            return;
+        }
+        input.push({
+            type: 'message',
+            role: role === 'assistant' ? 'assistant' : 'user',
+            content
+        });
+    }
+
+    _mapClaudeToolToResponses(tool) {
+        if (!tool || typeof tool !== 'object') {
+            return null;
+        }
+        if (tool.type === 'web_search_20250305') {
+            return { type: 'web_search_preview' };
+        }
+        return {
+            type: 'function',
+            name: tool.name,
+            description: tool.description || '',
+            parameters: cleanJsonSchemaForOpenAI(tool.input_schema || { type: 'object', properties: {} })
+        };
+    }
+
+    _mapClaudeToolChoiceToResponses(toolChoice) {
+        if (!toolChoice) {
+            return undefined;
+        }
+        if (typeof toolChoice === 'string') {
+            if (toolChoice === 'auto' || toolChoice === 'none' || toolChoice === 'required') {
+                return toolChoice;
+            }
+            return undefined;
+        }
+        if (toolChoice.type === 'auto') return 'auto';
+        if (toolChoice.type === 'any') return 'required';
+        if (toolChoice.type === 'none') return 'none';
+        if (toolChoice.type === 'tool' && toolChoice.name) {
+            return {
+                type: 'function',
+                name: toolChoice.name
+            };
+        }
+        return undefined;
+    }
+
+    _mapClaudeThinkingToResponses(claudeRequest) {
+        const thinkingType = claudeRequest.thinking?.type;
+        if (thinkingType !== 'enabled' && thinkingType !== 'adaptive') {
+            return undefined;
+        }
+        const configuredEffort = claudeRequest.output_config?.effort;
+        let effort = configuredEffort
+            ? String(configuredEffort).toLowerCase()
+            : determineReasoningEffortFromBudget(claudeRequest.thinking?.budget_tokens);
+        if (effort === 'max') {
+            effort = 'xhigh';
+        }
+        return { effort };
+    }
+
+    _buildResponsesMessageItemId(responseId, index = 0) {
+        return responseId ? `msg_${responseId}_${index}` : `msg_${uuidv4().replace(/-/g, '')}`;
+    }
+
+    _resetOpenAIResponsesStreamState(state, claudeMessage, model) {
+        const responseId = claudeMessage?.id || state.id;
+        state.id = responseId;
+        state.msgId = this._buildResponsesMessageItemId(responseId, 0);
+        state.fullText = '';
+        state.sequenceNumber = 0;
+        state.model = model || claudeMessage?.model || state.model;
+        state.status = 'in_progress';
+        state.startTime = Math.floor(Date.now() / 1000);
+        state.toolCalls = [];
+        state.currentToolCall = null;
+        state.savedUsage = null;
+        state.reasoningId = `rs_${responseId}_0`;
+        state.reasoningStarted = false;
+        state.reasoningText = '';
+    }
+
+    _ensureOpenAIResponsesReasoningStarted(state, outputIndex, events) {
+        if (state.reasoningStarted) {
+            return;
+        }
+        events.push({
+            type: "response.output_item.added",
+            output_index: outputIndex,
+            item: {
+                id: state.reasoningId,
+                type: "reasoning",
+                status: "in_progress",
+                summary: []
+            }
+        });
+        events.push({
+            type: "response.reasoning_summary_part.added",
+            item_id: state.reasoningId,
+            output_index: outputIndex,
+            summary_index: 0,
+            part: {
+                type: "summary_text",
+                text: ""
+            }
+        });
+        state.reasoningStarted = true;
+    }
+
     /**
      * Claude请求 -> OpenAI Responses请求
      */
     toOpenAIResponsesRequest(claudeRequest) {
         const responsesRequest = {
             model: claudeRequest.model,
-            instructions: '',
             input: [],
-            stream: claudeRequest.stream || false,
-            max_output_tokens: claudeRequest.max_tokens,
-            temperature: claudeRequest.temperature,
-            top_p: claudeRequest.top_p
+            stream: claudeRequest.stream || false
         };
 
-        // 处理系统指令
-        if (claudeRequest.system) {
-            if (Array.isArray(claudeRequest.system)) {
-                responsesRequest.instructions = claudeRequest.system.map(s => typeof s === 'string' ? s : s.text).join('\n');
-            } else {
-                responsesRequest.instructions = claudeRequest.system;
-            }
+        if (claudeRequest.max_tokens !== undefined) {
+            responsesRequest.max_output_tokens = claudeRequest.max_tokens;
+        }
+        if (claudeRequest.temperature !== undefined) {
+            responsesRequest.temperature = claudeRequest.temperature;
+        }
+        if (claudeRequest.top_p !== undefined) {
+            responsesRequest.top_p = claudeRequest.top_p;
+        }
+        if (claudeRequest.metadata !== undefined) {
+            responsesRequest.metadata = claudeRequest.metadata;
+        }
+        if (claudeRequest.parallel_tool_calls !== undefined) {
+            responsesRequest.parallel_tool_calls = claudeRequest.parallel_tool_calls;
+        }
+
+        const instructions = this._normalizeClaudeSystem(claudeRequest.system);
+        if (instructions) {
+            responsesRequest.instructions = instructions;
         }
 
         // 处理 thinking 配置
-        if (claudeRequest.thinking && claudeRequest.thinking.type === 'enabled') {
-            responsesRequest.reasoning = {
-                effort: determineReasoningEffortFromBudget(claudeRequest.thinking.budget_tokens)
-            };
+        const reasoning = this._mapClaudeThinkingToResponses(claudeRequest);
+        if (reasoning) {
+            responsesRequest.reasoning = reasoning;
         }
 
         // 处理消息
@@ -1604,89 +1782,86 @@ export class ClaudeConverter extends BaseConverter {
             claudeRequest.messages.forEach(msg => {
                 const role = msg.role;
                 const content = msg.content;
+                let messageContent = [];
+
+                const flushMessage = () => {
+                    this._pushResponsesMessage(responsesRequest.input, role, messageContent);
+                    messageContent = [];
+                };
 
                 if (Array.isArray(content)) {
-                    // 检查是否包含 tool_result
-                    const toolResult = content.find(c => c.type === 'tool_result');
-                    if (toolResult) {
-                        responsesRequest.input.push({
-                            type: 'function_call_output',
-                            call_id: toolResult.tool_use_id,
-                            output: typeof toolResult.content === 'string' ? toolResult.content : JSON.stringify(toolResult.content)
-                        });
-                        return;
-                    }
-
-                    // 检查是否包含 tool_use
-                    const toolUse = content.find(c => c.type === 'tool_use');
-                    if (toolUse) {
-                        responsesRequest.input.push({
-                            type: 'function_call',
-                            call_id: toolUse.id,
-                            name: toolUse.name,
-                            arguments: typeof toolUse.input === 'string' ? toolUse.input : JSON.stringify(toolUse.input)
-                        });
-                        return;
-                    }
-
-                    const responsesContent = content.map(c => {
+                    for (const c of content) {
+                        if (!c) continue;
                         if (c.type === 'text') {
-                            return {
+                            messageContent.push({
                                 type: role === 'assistant' ? 'output_text' : 'input_text',
-                                text: c.text
-                            };
-                        } else if (c.type === 'image') {
-                            return {
-                                type: 'input_image',
-                                image_url: {
-                                    url: `data:${c.source.media_type};base64,${c.source.data}`
-                                }
-                            };
+                                text: c.text || ''
+                            });
+                            continue;
                         }
-                        return null;
-                    }).filter(Boolean);
-
-                    if (responsesContent.length > 0) {
-                        responsesRequest.input.push({
-                            type: 'message',
-                            role: role,
-                            content: responsesContent
-                        });
+                        if (c.type === 'image') {
+                            const imagePart = this._claudeImageToResponsesPart(c);
+                            if (imagePart) {
+                                messageContent.push(imagePart);
+                            }
+                            continue;
+                        }
+                        if (c.type === 'thinking') {
+                            flushMessage();
+                            const thinkingText = c.thinking ?? c.text;
+                            if (thinkingText) {
+                                responsesRequest.input.push({
+                                    type: 'reasoning',
+                                    summary: [{
+                                        type: 'summary_text',
+                                        text: String(thinkingText)
+                                    }]
+                                });
+                            }
+                            continue;
+                        }
+                        if (c.type === 'tool_use') {
+                            flushMessage();
+                            responsesRequest.input.push({
+                                type: 'function_call',
+                                call_id: c.id,
+                                name: c.name,
+                                arguments: typeof c.input === 'string' ? c.input : JSON.stringify(c.input || {}),
+                                status: 'completed'
+                            });
+                            continue;
+                        }
+                        if (c.type === 'tool_result') {
+                            flushMessage();
+                            responsesRequest.input.push({
+                                type: 'function_call_output',
+                                call_id: c.tool_use_id || c.id,
+                                output: this._stringifyContentValue(c.content)
+                            });
+                        }
                     }
+                    flushMessage();
                 } else if (typeof content === 'string') {
-                    responsesRequest.input.push({
-                        type: 'message',
-                        role: role,
-                        content: [{
-                            type: role === 'assistant' ? 'output_text' : 'input_text',
-                            text: content
-                        }]
+                    messageContent.push({
+                        type: role === 'assistant' ? 'output_text' : 'input_text',
+                        text: content
                     });
+                    flushMessage();
                 }
             });
         }
 
         // 处理工具
         if (claudeRequest.tools && Array.isArray(claudeRequest.tools)) {
-            responsesRequest.tools = claudeRequest.tools.map(tool => ({
-                type: 'function',
-                name: tool.name,
-                description: tool.description,
-                parameters: tool.input_schema || { type: 'object', properties: {} }
-            }));
+            const tools = claudeRequest.tools.map(tool => this._mapClaudeToolToResponses(tool)).filter(Boolean);
+            if (tools.length > 0) {
+                responsesRequest.tools = tools;
+            }
         }
 
-        if (claudeRequest.tool_choice) {
-            if (claudeRequest.tool_choice.type === 'auto') {
-                responsesRequest.tool_choice = 'auto';
-            } else if (claudeRequest.tool_choice.type === 'any') {
-                responsesRequest.tool_choice = 'required';
-            } else if (claudeRequest.tool_choice.type === 'tool') {
-                responsesRequest.tool_choice = {
-                    type: 'function',
-                    function: { name: claudeRequest.tool_choice.name }
-                };
-            }
+        const toolChoice = this._mapClaudeToolChoiceToResponses(claudeRequest.tool_choice);
+        if (toolChoice) {
+            responsesRequest.tool_choice = toolChoice;
         }
 
         return responsesRequest;
@@ -1698,7 +1873,10 @@ export class ClaudeConverter extends BaseConverter {
     toOpenAIResponsesResponse(claudeResponse, model) {
         const output = [];
         const messageContent = [];
-        let hasToolUse = false;
+        const reasoningSummary = [];
+        const createdAt = Math.floor(Date.now() / 1000);
+        const responseId = claudeResponse.id || `resp_${uuidv4().replace(/-/g, '')}`;
+        const messageItemId = this._buildResponsesMessageItemId(responseId, 0);
 
         // Process Claude content blocks, handling both text and tool_use
         if (Array.isArray(claudeResponse.content)) {
@@ -1710,11 +1888,18 @@ export class ClaudeConverter extends BaseConverter {
                         text: block.text,
                         type: "output_text"
                     });
+                } else if (block.type === 'thinking') {
+                    const thinking = block.thinking ?? block.text;
+                    if (thinking) {
+                        reasoningSummary.push({
+                            type: "summary_text",
+                            text: String(thinking)
+                        });
+                    }
                 } else if (block.type === 'tool_use') {
-                    hasToolUse = true;
                     output.push({
                         type: "function_call",
-                        id: block.id || `fc_${uuidv4().replace(/-/g, '')}`,
+                        id: `fc_${uuidv4().replace(/-/g, '')}`,
                         call_id: block.id || `call_${uuidv4().replace(/-/g, '')}`,
                         name: block.name,
                         arguments: typeof block.input === 'string' ? block.input : JSON.stringify(block.input || {}),
@@ -1724,22 +1909,34 @@ export class ClaudeConverter extends BaseConverter {
             }
         }
 
-        // Always include the message output item (even if content is empty)
-        output.unshift({
-            type: "message",
-            id: `msg_${uuidv4().replace(/-/g, '')}`,
-            summary: [],
-            role: "assistant",
-            status: "completed",
-            content: messageContent
-        });
+        if (reasoningSummary.length > 0) {
+            output.unshift({
+                id: `rs_${uuidv4().replace(/-/g, '')}`,
+                type: "reasoning",
+                status: "completed",
+                summary: reasoningSummary
+            });
+        }
+
+        if (messageContent.length > 0 || output.length === 0) {
+            output.unshift({
+                type: "message",
+                id: messageItemId,
+                summary: [],
+                role: "assistant",
+                status: "completed",
+                content: messageContent
+            });
+        }
+
+        const incomplete = claudeResponse.stop_reason === 'max_tokens';
 
         return {
             background: false,
-            created_at: Math.floor(Date.now() / 1000),
+            created_at: createdAt,
             error: null,
-            id: `resp_${uuidv4().replace(/-/g, '')}`,
-            incomplete_details: null,
+            id: responseId,
+            incomplete_details: incomplete ? { reason: "max_output_tokens" } : null,
             max_output_tokens: null,
             max_tool_calls: null,
             metadata: {},
@@ -1749,10 +1946,10 @@ export class ClaudeConverter extends BaseConverter {
             parallel_tool_calls: true,
             previous_response_id: null,
             prompt_cache_key: null,
-            reasoning: {},
+            reasoning: reasoningSummary.length > 0 ? { summary: "auto" } : {},
             safety_identifier: "user-" + uuidv4().replace(/-/g, ''),
             service_tier: "default",
-            status: hasToolUse ? "requires_action" : "completed",
+            status: incomplete ? "incomplete" : "completed",
             store: false,
             temperature: 1,
             text: {
@@ -1784,16 +1981,18 @@ export class ClaudeConverter extends BaseConverter {
     toOpenAIResponsesStreamChunk(claudeChunk, model, requestId = null) {
         if (!claudeChunk) return [];
 
-        const responseId = requestId || `resp_${uuidv4().replace(/-/g, '')}`;
+        const stateKey = requestId || 'default';
         const events = [];
 
         // message_start 事件 - 流开始
         if (claudeChunk.type === 'message_start') {
+            const state = streamStateManager.getOrCreateState(stateKey);
+            this._resetOpenAIResponsesStreamState(state, claudeChunk.message, model);
             events.push(
-                generateResponseCreated(responseId, model || 'unknown'),
-                generateResponseInProgress(responseId),
-                generateOutputItemAdded(responseId),
-                generateContentPartAdded(responseId)
+                generateResponseCreated(stateKey, model || claudeChunk.message?.model || 'unknown'),
+                generateResponseInProgress(stateKey),
+                generateOutputItemAdded(stateKey),
+                generateContentPartAdded(stateKey)
             );
         }
 
@@ -1803,7 +2002,7 @@ export class ClaudeConverter extends BaseConverter {
             
             // 对于 tool_use 类型，添加工具调用项
             if (contentBlock && contentBlock.type === 'tool_use') {
-                startToolCall(responseId, contentBlock.id, contentBlock.name);
+                startToolCall(stateKey, contentBlock.id, contentBlock.name);
                 events.push({
                     item: {
                         id: contentBlock.id,
@@ -1826,38 +2025,43 @@ export class ClaudeConverter extends BaseConverter {
             
             // 处理文本增量
             if (delta && delta.type === 'text_delta') {
-                events.push(generateOutputTextDelta(responseId, delta.text || ""));
+                events.push(generateOutputTextDelta(stateKey, delta.text || ""));
             }
             // 处理推理内容增量
             else if (delta && delta.type === 'thinking_delta') {
+                const state = streamStateManager.getOrCreateState(stateKey);
+                const outputIndex = claudeChunk.index || 0;
+                this._ensureOpenAIResponsesReasoningStarted(state, outputIndex, events);
+                state.reasoningText += delta.thinking || "";
                 events.push({
                     delta: delta.thinking || "",
-                    item_id: `thinking_${uuidv4().replace(/-/g, '')}`,
-                    output_index: claudeChunk.index || 0,
+                    item_id: state.reasoningId,
+                    output_index: outputIndex,
                     sequence_number: 3,
+                    summary_index: 0,
                     type: "response.reasoning_summary_text.delta"
                 });
             }
             // 处理工具调用参数增量
             else if (delta && delta.type === 'input_json_delta') {
-                const state = streamStateManager.getOrCreateState(responseId);
+                const state = streamStateManager.getOrCreateState(stateKey);
                 const itemId = state.currentToolCall ? state.currentToolCall.id : 'unknown';
                 events.push(generateFunctionCallArgsDelta(
-                    responseId, itemId, claudeChunk.index || 0, delta.partial_json || ""
+                    stateKey, itemId, claudeChunk.index || 0, delta.partial_json || ""
                 ));
             }
         }
 
         // content_block_stop 事件
         if (claudeChunk.type === 'content_block_stop') {
-            const state = streamStateManager.getOrCreateState(responseId);
+            const state = streamStateManager.getOrCreateState(stateKey);
             if (state.currentToolCall) {
                 const itemId = state.currentToolCall.id;
                 const outputIdx = claudeChunk.index || 0;
-                events.push(generateFunctionCallArgsDone(responseId, itemId, outputIdx));
-                const finished = finishToolCall(responseId);
+                events.push(generateFunctionCallArgsDone(stateKey, itemId, outputIdx));
+                const finished = finishToolCall(stateKey);
                 if (finished) {
-                    events.push(generateFunctionCallOutputItemDone(responseId, finished, outputIdx));
+                    events.push(generateFunctionCallOutputItemDone(stateKey, finished, outputIdx));
                 }
             }
         }
@@ -1865,7 +2069,7 @@ export class ClaudeConverter extends BaseConverter {
         // message_delta 事件 - 保存 usage 供 message_stop 使用
         if (claudeChunk.type === 'message_delta') {
             if (claudeChunk.usage) {
-                const state = streamStateManager.getOrCreateState(responseId);
+                const state = streamStateManager.getOrCreateState(stateKey);
                 state.savedUsage = {
                     input_tokens: claudeChunk.usage.input_tokens || 0,
                     input_tokens_details: { cached_tokens: claudeChunk.usage.cache_read_input_tokens || 0 },
@@ -1878,14 +2082,59 @@ export class ClaudeConverter extends BaseConverter {
 
         // message_stop 事件
         if (claudeChunk.type === 'message_stop') {
-            const state = streamStateManager.getOrCreateState(responseId);
+            const state = streamStateManager.getOrCreateState(stateKey);
             const savedUsage = state.savedUsage || null;
+            if (state.reasoningStarted) {
+                events.push({
+                    type: "response.reasoning_summary_text.done",
+                    item_id: state.reasoningId,
+                    output_index: 0,
+                    summary_index: 0,
+                    text: state.reasoningText
+                });
+                events.push({
+                    type: "response.reasoning_summary_part.done",
+                    item_id: state.reasoningId,
+                    output_index: 0,
+                    summary_index: 0,
+                    part: {
+                        type: "summary_text",
+                        text: state.reasoningText
+                    }
+                });
+                events.push({
+                    type: "response.output_item.done",
+                    output_index: 0,
+                    item: {
+                        id: state.reasoningId,
+                        type: "reasoning",
+                        status: "completed",
+                        summary: [{
+                            type: "summary_text",
+                            text: state.reasoningText
+                        }]
+                    }
+                });
+            }
             events.push(
-                generateOutputTextDone(responseId),
-                generateContentPartDone(responseId),
-                generateOutputItemDone(responseId),
-                generateResponseCompleted(responseId, savedUsage)
+                generateOutputTextDone(stateKey),
+                generateContentPartDone(stateKey),
+                generateOutputItemDone(stateKey)
             );
+            const completedEvent = generateResponseCompleted(stateKey, savedUsage);
+            if (state.reasoningStarted) {
+                completedEvent.response.output.unshift({
+                    id: state.reasoningId,
+                    type: "reasoning",
+                    status: "completed",
+                    summary: [{
+                        type: "summary_text",
+                        text: state.reasoningText
+                    }]
+                });
+            }
+            events.push(completedEvent);
+            streamStateManager.cleanup(stateKey);
         }
 
         return events;

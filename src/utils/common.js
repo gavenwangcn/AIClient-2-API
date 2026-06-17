@@ -88,6 +88,132 @@ function getErrorStatusCode(error) {
     return error?.response?.status || error?.status || error?.statusCode || error?.code || null;
 }
 
+function getHttpStatusLabel(status) {
+    switch (status) {
+        case 400: return 'Bad Request';
+        case 401: return 'Unauthorized';
+        case 402: return 'Payment Required';
+        case 403: return 'Forbidden';
+        case 404: return 'Not Found';
+        case 408: return 'Request Timeout';
+        case 409: return 'Conflict';
+        case 422: return 'Unprocessable Entity';
+        case 429: return 'Too Many Requests';
+        case 500: return 'Internal Server Error';
+        case 502: return 'Bad Gateway';
+        case 503: return 'Service Unavailable';
+        case 504: return 'Gateway Timeout';
+        default: return 'HTTP Error';
+    }
+}
+
+function extractReadableErrorText(data) {
+    if (data === undefined || data === null) return '';
+    if (typeof data === 'string') return data;
+    if (Buffer.isBuffer(data)) return data.toString('utf8');
+
+    if (Array.isArray(data)) {
+        return data
+            .map(item => extractReadableErrorText(item))
+            .filter(Boolean)
+            .join(' | ');
+    }
+
+    if (typeof data !== 'object') {
+        return String(data);
+    }
+
+    const directFields = [
+        data.message,
+        data.error_description,
+        data.description,
+        data.detail,
+        data.reason,
+        data.msg
+    ].filter(value => typeof value === 'string' && value.trim());
+
+    if (directFields.length > 0) {
+        return directFields.join(' | ');
+    }
+
+    if (typeof data.error === 'string' && data.error.trim()) {
+        return data.error;
+    }
+
+    if (data.error && typeof data.error === 'object') {
+        const nestedError = extractReadableErrorText(data.error);
+        if (nestedError) return nestedError;
+    }
+
+    if (Array.isArray(data.details)) {
+        const detailText = data.details
+            .map(detail => extractReadableErrorText(detail))
+            .filter(Boolean)
+            .join(' | ');
+        if (detailText) return detailText;
+    }
+
+    if (data.metadata && typeof data.metadata === 'object') {
+        const metadataText = extractReadableErrorText(data.metadata);
+        if (metadataText) return metadataText;
+    }
+
+    try {
+        return JSON.stringify(data);
+    } catch {
+        return String(data);
+    }
+}
+
+export async function getNormalizedErrorResponseText(error) {
+    const data = error?.response?.data;
+    const fallbackText = extractReadableErrorText(data) || error?.message || '';
+
+    if (!data || typeof data?.on !== 'function' || typeof data?.read !== 'function') {
+        return fallbackText;
+    }
+
+    const chunks = [];
+    try {
+        for await (const chunk of data) {
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)));
+        }
+
+        const bodyText = Buffer.concat(chunks).toString('utf8');
+        if (!bodyText) return fallbackText;
+
+        try {
+            const parsed = JSON.parse(bodyText);
+            return extractReadableErrorText(parsed) || bodyText;
+        } catch {
+            return bodyText;
+        }
+    } catch (readError) {
+        logger.warn(`[Error Normalize] Failed to read error response stream: ${readError.message}`);
+        return fallbackText;
+    }
+}
+
+export function buildHttpErrorReason(status, context, responseText = '', options = {}) {
+    const statusLabel = getHttpStatusLabel(status);
+    const responseSnippet = responseText ? responseText.substring(0, 500) : '';
+    const suffix = options.suffix ? ` - ${options.suffix}` : '';
+    const prefix = status ? `${status} ${statusLabel}` : statusLabel;
+    return `${prefix}${context ? ` (${context})` : ''}${suffix}${responseSnippet ? `: ${responseSnippet}` : ''}`;
+}
+
+export async function normalizeProviderErrorMessage(error, options = {}) {
+    const status = options.status ?? getErrorStatusCode(error);
+    const responseText = await getNormalizedErrorResponseText(error);
+    const reason = buildHttpErrorReason(status, options.context || '', responseText, {
+        suffix: options.suffix || ''
+    });
+    // Normalize in place so existing throw/logging paths that keep using `error`
+    // automatically see the readable message without forcing every caller to reassign.
+    error.message = reason;
+    return { responseText, reason, status };
+}
+
 function getHeaderValue(headers, headerName) {
     if (!headers) return null;
 
@@ -214,6 +340,7 @@ export const API_ACTIONS = {
     GENERATE_CONTENT: 'generateContent',
     STREAM_GENERATE_CONTENT: 'streamGenerateContent',
 };
+export const DEFAULT_REQUEST_BODY_MAX_BYTES = 10 * 1024 * 1024;
 
 import {
     usesManagedModelList,
@@ -402,7 +529,15 @@ function appendCustomModelsToModelList(clientModelList, customEntries, providerT
 export function getProtocolPrefix(provider) {
     // Special case for Codex - it needs its own protocol
     if (provider === 'openai-codex-oauth') {
-        return 'codex';
+        return MODEL_PROTOCOL_PREFIX.CODEX;
+    }
+    // Grok CLI OAuth talks to xAI Responses API directly.
+    if (provider === 'grok-cli-oauth' || provider.startsWith('grok-cli-oauth-')) {
+        return MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES;
+    }
+    // Special case for AtlasCloud - it uses openai protocol
+    if (provider === 'atlascloud' || provider.startsWith('atlascloud-')) {
+        return MODEL_PROTOCOL_PREFIX.OPENAI;
     }
     // Consensus：对外以 OpenAI Chat 兼容 JSON 返回检索结果
     if (provider === 'consensus-mcp-oauth') {
@@ -488,36 +623,127 @@ export function formatExpiryLog(tag, expiryDate, nearMinutes) {
     return { message, isNearExpiry };
 }
 
+function normalizeIpAddress(ip) {
+    if (!ip) return null;
+
+    let normalized = String(ip).trim();
+    if (!normalized) return null;
+
+    // Clean up IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+    if (normalized.startsWith('::ffff:')) {
+        normalized = normalized.substring('::ffff:'.length);
+    }
+
+    return normalized || null;
+}
+
+function parseTrustedProxyIps(value) {
+    if (Array.isArray(value)) {
+        return value
+            .flatMap(item => parseTrustedProxyIps(item))
+            .filter(Boolean);
+    }
+
+    if (typeof value !== 'string') {
+        return [];
+    }
+
+    return value
+        .split(',')
+        .map(item => normalizeIpAddress(item))
+        .filter(Boolean);
+}
+
+function isTrustedProxyIp(ip, trustedProxyIps) {
+    const normalizedIp = normalizeIpAddress(ip);
+    if (!normalizedIp) return false;
+
+    return parseTrustedProxyIps(trustedProxyIps).some(trustedIp => trustedIp === normalizedIp);
+}
+
 /**
- * Get client IP address from request
+ * Get client IP address from request.
+ *
+ * x-forwarded-for is client-controlled unless the immediate peer is a trusted
+ * reverse proxy. Keep TRUST_PROXY disabled by default for login rate limits.
+ *
  * @param {http.IncomingMessage} req - The HTTP request object.
+ * @param {Object} [config] - Optional server configuration.
  * @returns {string} The client IP address.
  */
-export function getClientIp(req) {
-    const forwarded = req.headers['x-forwarded-for'];
-    let ip = forwarded ? forwarded.split(',')[0].trim() : req.socket.remoteAddress;
-    
-    // Clean up IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
-    if (ip && ip.includes('::ffff:')) {
-        ip = ip.replace('::ffff:', '');
+export function getClientIp(req, config = {}) {
+    const socketIp = normalizeIpAddress(req.socket?.remoteAddress);
+
+    if (config?.TRUST_PROXY === true && isTrustedProxyIp(socketIp, config.TRUSTED_PROXY_IPS)) {
+        const forwarded = req.headers?.['x-forwarded-for'];
+        const forwardedValue = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+        const forwardedIp = normalizeIpAddress(forwardedValue?.split(',')[0]);
+        if (forwardedIp) {
+            return forwardedIp;
+        }
     }
-    
-    return ip || 'unknown';
+
+    return socketIp || 'unknown';
 }
 
 /**
  * Reads the entire request body from an HTTP request.
  * @param {http.IncomingMessage} req - The HTTP request object.
+ * @param {{ maxBytes?: number }} options - Optional body limits.
  * @returns {Promise<Object>} A promise that resolves with the parsed JSON request body.
  * @throws {Error} If the request body is not valid JSON.
  */
-export function getRequestBody(req) {
+export function getRequestBody(req, options = {}) {
     return new Promise((resolve, reject) => {
         let body = '';
+        let receivedBytes = 0;
+        let settled = false;
+        const maxBytes = Number(options.maxBytes) > 0 ? Number(options.maxBytes) : DEFAULT_REQUEST_BODY_MAX_BYTES;
+
+        // 1. Quick check Content-Length header
+        const headers = req.headers || {};
+        const contentLength = parseInt(headers['content-length'] || '0', 10);
+        if (!isNaN(contentLength) && contentLength > maxBytes) {
+            req.resume(); // drain & discard
+            const error = new Error(`Request body too large. Maximum size is ${maxBytes} bytes.`);
+            error.statusCode = 413;
+            error.code = 'BODY_TOO_LARGE';
+            return reject(error);
+        }
+
+        const fail = (error) => {
+            if (settled) return;
+            settled = true;
+            if (typeof req.destroy === 'function') {
+                req.destroy();
+            }
+            reject(error);
+        };
+
+        const rejectTooLarge = (error) => {
+            if (settled) return;
+            settled = true;
+            if (typeof req.resume === 'function') {
+                req.resume();
+            }
+            reject(error);
+        };
+
         req.on('data', chunk => {
+            if (settled) return;
+            receivedBytes += chunk.length;
+            if (maxBytes && receivedBytes > maxBytes) {
+                const error = new Error(`Request body too large. Maximum size is ${maxBytes} bytes.`);
+                error.statusCode = 413;
+                error.code = 'BODY_TOO_LARGE';
+                rejectTooLarge(error);
+                return;
+            }
             body += chunk.toString();
         });
         req.on('end', () => {
+            if (settled) return;
+            settled = true;
             if (!body) {
                 return resolve({});
             }
@@ -528,7 +754,7 @@ export function getRequestBody(req) {
             }
         });
         req.on('error', err => {
-            reject(err);
+            fail(err);
         });
     });
 }
@@ -676,6 +902,11 @@ export async function handleStreamRequest(res, service, model, requestBody, from
         requestBody.model = model;
         tUpstreamStart = Date.now();
         const nativeStream = await service.generateContentStream(model, requestBody);
+
+        // 如果提供者内部发生了模型回退（如 Antigravity 自动降级），同步更新本地 model 变量
+        if (requestBody.model && requestBody.model !== model) {
+            model = requestBody.model;
+        }
         const trace = CONFIG?._apiTraceLogger;
         if (trace && trace.isProcessing()) {
             // 流式不可在 await 返回后立即 recordUpstreamApiTime：那只是「拿到 stream」≈0ms，且 UI 把 0 当 falsy。真实耗时见 finally 的 cursorApiTime。
@@ -1099,6 +1330,9 @@ export async function handleUnaryRequest(res, service, model, requestBody, fromP
         while (true) {
             const tUpstream = Date.now();
             const nativeResponse = await service.generateContent(model, currentBody);
+            if (requestBody.model && requestBody.model !== model) {
+                model = requestBody.model;
+            }
             if (roundIndex === 0 && trace && trace.isProcessing()) {
                 trace.recordUpstreamApiTime(tUpstream);
                 trace.endPhase();
@@ -1455,7 +1689,7 @@ function mapEndpointToApiFormat(endpointType) {
  * @param {string} PROMPT_LOG_FILENAME - The prompt log filename.
  */
 export async function handleContentGenerationRequest(req, res, service, endpointType, CONFIG, PROMPT_LOG_FILENAME, providerPoolManager, pooluuid, requestPath = null) {
-    const originalRequestBody = await getRequestBody(req);
+    const originalRequestBody = await getRequestBody(req, { maxBytes: CONFIG.REQUEST_BODY_MAX_BYTES });
 
     if (!originalRequestBody) {
         throw new Error("Request body is missing for content generation.");
@@ -1629,6 +1863,11 @@ export async function handleContentGenerationRequest(req, res, service, endpoint
         await handleStreamRequest(res, service, model, processedRequestBody, fromProvider, toProvider, CONFIG.PROMPT_LOG_MODE, PROMPT_LOG_FILENAME, providerPoolManager, actualUuid, actualCustomName, retryContext);
     } else {
         await handleUnaryRequest(res, service, model, processedRequestBody, fromProvider, toProvider, CONFIG.PROMPT_LOG_MODE, PROMPT_LOG_FILENAME, providerPoolManager, actualUuid, actualCustomName, retryContext);
+    }
+
+    // 同步更新模型名称（如果处理器内部或提供者发生了回退）
+    if (processedRequestBody.model && processedRequestBody.model !== model) {
+        model = processedRequestBody.model;
     }
 
     // 执行插件钩子：内容生成后
@@ -2051,6 +2290,33 @@ export function extractSystemPromptFromRequestBody(requestBody, provider) {
                 }
             }
             break;
+        case MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES: {
+            if (typeof requestBody.instructions === 'string') {
+                incomingSystemText = requestBody.instructions;
+            } else if (requestBody.instructions) {
+                incomingSystemText = JSON.stringify(requestBody.instructions);
+            } else if (Array.isArray(requestBody.input)) {
+                const responsesSystemItem = requestBody.input.find(item =>
+                    item?.role === 'system' ||
+                    item?.role === 'developer' ||
+                    item?.type === 'system' ||
+                    item?.type === 'developer' ||
+                    (item?.type === 'message' && (item?.role === 'system' || item?.role === 'developer'))
+                );
+
+                const content = responsesSystemItem?.content;
+                if (typeof content === 'string') {
+                    incomingSystemText = content;
+                } else if (Array.isArray(content)) {
+                    incomingSystemText = content
+                        .map(part => typeof part === 'string' ? part : (part?.text || part?.content || JSON.stringify(part)))
+                        .join('\n');
+                } else if (content) {
+                    incomingSystemText = JSON.stringify(content);
+                }
+            }
+            break;
+        }
         default:
             logger.warn(`[System Prompt] Unknown provider: ${provider}`);
             break;

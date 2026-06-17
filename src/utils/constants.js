@@ -59,6 +59,7 @@ export const MODEL_PROVIDER = {
     GEMINI_CLI: 'gemini-cli-oauth',
     ANTIGRAVITY: 'gemini-antigravity',
     OPENAI_CUSTOM: 'openai-custom',
+    ATLASCLOUD: 'atlascloud',
     OPENAI_CUSTOM_RESPONSES: 'openaiResponses-custom',
     CLAUDE_CUSTOM: 'claude-custom',
     KIRO_API: 'claude-kiro-oauth',
@@ -69,15 +70,26 @@ export const MODEL_PROVIDER = {
     GROK_WEB: 'grok-web',
     /** Consensus MCP（论文检索，经 mcporter 代理官方 MCP） */
     CONSENSUS_MCP: 'consensus-mcp-oauth',
+    GROK_CLI: 'grok-cli-oauth',
     AUTO: 'auto',
 };
 
 // 图像生成模型常量
 export const SUPPORTED_IMAGE_MODELS = new Set([
     'gpt-image-2',
+    'grok-imagine-image-quality',
+    'grok-imagine-image',
+    'grok-imagine-image-pro',
     'grok-imagine-1.0',
     'grok-imagine-1.0-edit',
     'gemini-3.1-flash-image'
+]);
+
+// 视频生成模型常量
+export const SUPPORTED_VIDEO_MODELS = new Set([
+    'grok-imagine-video',
+    'grok-imagine-video-1.5-preview',
+    'grok-imagine-video-1.5-2026-05-30'
 ]);
 
 // UI 相关的路径常量

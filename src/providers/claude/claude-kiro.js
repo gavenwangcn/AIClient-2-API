@@ -17,7 +17,7 @@ import {
     getContentText as getContentTextUtil
 } from '../../utils/token-utils.js';
 import { configureAxiosProxy, configureTLSSidecar, isTLSSidecarEnabledForProvider } from '../../utils/proxy-utils.js';
-import { isRetryableNetworkError, MODEL_PROVIDER, formatExpiryLog } from '../../utils/common.js';
+import { isRetryableNetworkError, MODEL_PROVIDER, formatExpiryLog, getNormalizedErrorResponseText, buildHttpErrorReason, normalizeProviderErrorMessage } from '../../utils/common.js';
 import { getProviderPoolManager } from '../../services/service-manager.js';
 
 const KIRO_THINKING = {
@@ -154,6 +154,7 @@ function normalizeKiroToolInput(input) {
 
 // Per-model context window sizes for accurate token estimation
 const MODEL_CONTEXT_TOKENS = {
+    "claude-opus-4-8": 1000000,
     "claude-opus-4-7": 1000000,
     "claude-opus-4-6": 1000000,
     "claude-opus-4-5": 1000000,
@@ -204,6 +205,7 @@ const KIRO_MODELS = getProviderModels(MODEL_PROVIDER.KIRO_API);
 // 完整的模型映射表
 const FULL_MODEL_MAPPING = {
     "claude-haiku-4-5":"claude-haiku-4.5",
+    "claude-opus-4-8":"claude-opus-4.8",
     "claude-opus-4-7":"claude-opus-4.7",
     "claude-opus-4-6":"claude-opus-4.6",
     "claude-sonnet-4-6":"claude-sonnet-4.6",
@@ -925,6 +927,38 @@ async saveCredentialsToFile(filePath, newData) {
         return getContentTextUtil(message);
     }
 
+    _extractTextAndImagesFromContent(content, totalMessages = null) {
+        const result = { text: '', images: [], imageCount: 0 };
+        const shouldKeepImages = totalMessages === null ? true : (totalMessages - 1) <= 5;
+        if (Array.isArray(content)) {
+            for (const part of content) {
+                if (part.type === 'text') {
+                    result.text += part.text || '';
+                } else if (part.type === 'image' && part.source?.data) {
+                    result.imageCount++;
+                    if (shouldKeepImages) result.images.push({
+                        format: part.source.media_type.split('/')[1],
+                        source: { bytes: part.source.data }
+                    });
+                } else if (part.type === 'image_url' && part.image_url) {
+                    const imageUrl = typeof part.image_url === 'string' ? part.image_url : part.image_url.url;
+                    if (imageUrl && imageUrl.startsWith('data:')) {
+                        const [header, data] = imageUrl.split(',');
+                        const mediaType = header.split(':')[1]?.split(';')[0] || 'image/jpeg';
+                        result.imageCount++;
+                        if (shouldKeepImages) result.images.push({
+                            format: mediaType.split('/')[1] || 'jpeg',
+                            source: { bytes: data }
+                        });
+                    }
+                }
+            }
+            return result;
+        }
+        result.text = getContentTextUtil({ content });
+        return result;
+    }
+
     /**
      * 清洗 tool_use 的 input 对象，移除空字符串 key 等不合法字段
      * Kiro API 不接受空字符串 key 的 JSON 对象（如 {"": "value"}）
@@ -1039,7 +1073,10 @@ async saveCredentialsToFile(filePath, newData) {
                                </CRITICAL_OVERRIDE>
                                <identity>
                                 你是 {{identity}}，一名拥有多种编程语言、框架、设计模式和最佳实践丰富知识的高级软件工程师。
-                               </identity>`;
+                               </identity>
+                               <tool_use_guidelines>
+                                写数据时需要强制拆小，使用分段写入/编辑工具，而不是一次性写入或者编辑。
+                               </tool_use_guidelines>`;
         
         let systemPrompt = this.getContentText(inSystemPrompt);
         // 在 systemPrompt 前面添加内置前缀
@@ -1233,14 +1270,23 @@ async saveCredentialsToFile(filePath, newData) {
             if (processedMessages[0].role === 'user' && processedMessages.length === 1) {
                 prependSystemToCurrentMessage = true;
             } else if (processedMessages[0].role === 'user') {
-                let firstUserContent = this.getContentText(processedMessages[0]);
-                history.push({
+                const firstUserPayload = this._extractTextAndImagesFromContent(processedMessages[0].content, processedMessages.length);
+                const firstImagePlaceholder = firstUserPayload.imageCount > 0 && firstUserPayload.images.length === 0
+                    ? `[此消息包含 ${firstUserPayload.imageCount} 张图片，已在历史记录中省略]`
+                    : '';
+                const firstHistoryMsg = {
                     userInputMessage: {
-                        content: `${systemPrompt}\n\n${firstUserContent}`,
+                        content: firstUserPayload.text
+                            ? `${systemPrompt}\n\n${firstUserPayload.text}${firstImagePlaceholder ? `\n${firstImagePlaceholder}` : ''}`
+                            : `${systemPrompt}${firstImagePlaceholder ? `\n${firstImagePlaceholder}` : ''}`,
                         modelId: codewhispererModel,
                         origin: KIRO_CONSTANTS.ORIGIN_AI_EDITOR,
                     }
-                });
+                };
+                if (firstUserPayload.images.length > 0) {
+                    firstHistoryMsg.userInputMessage.images = firstUserPayload.images;
+                }
+                history.push(firstHistoryMsg);
                 startIndex = 1; // Start processing from the second message
             } else {
                 // If the first message is not a user message, or if there's no initial user message,
@@ -1713,6 +1759,11 @@ async saveCredentialsToFile(filePath, newData) {
             // Handle 401 (Unauthorized) - refresh UUID first, then try to refresh token
             if (status === 401 && !isRetry) {
                 logger.info('[Kiro] Received 401. Refreshing UUID and triggering background refresh via PoolManager...');
+                await normalizeProviderErrorMessage(error, {
+                    status: 401,
+                    context: 'callApi',
+                    suffix: 'triggering auto-refresh'
+                });
                 
                 // 1. 先刷新 UUID
                 const newUuid = this._refreshUuid();
@@ -1747,6 +1798,7 @@ async saveCredentialsToFile(filePath, newData) {
             // Handle 429 (Too Many Requests) - wait baseDelay then switch credential
             if (status === 429) {
                 logger.info(`[Kiro] Received 429 (Too Many Requests). Waiting ${baseDelay}ms before switching credential...`);
+                await normalizeProviderErrorMessage(error, { status: 429, context: 'callApi' });
                 await new Promise(resolve => setTimeout(resolve, baseDelay));
                 // Mark error for credential switch without recording error count
                 error.shouldSwitchCredential = true;
@@ -1757,6 +1809,7 @@ async saveCredentialsToFile(filePath, newData) {
             // Handle 5xx server errors - wait baseDelay then switch credential
             if (status >= 500 && status < 600) {
                 logger.info(`[Kiro] Received ${status} server error. Waiting ${baseDelay}ms before switching credential...`);
+                await normalizeProviderErrorMessage(error, { status, context: 'callApi' });
                 await new Promise(resolve => setTimeout(resolve, baseDelay));
                 // Mark error for credential switch without recording error count
                 error.shouldSwitchCredential = true;
@@ -1779,26 +1832,8 @@ async saveCredentialsToFile(filePath, newData) {
         }
     }
 
-    _getErrorResponseText(error) {
-        const data = error?.response?.data;
-        if (data === undefined || data === null) {
-            return error?.message || '';
-        }
-        if (Buffer.isBuffer(data)) {
-            return data.toString('utf8');
-        }
-        if (typeof data === 'string') {
-            return data;
-        }
-        try {
-            return JSON.stringify(data);
-        } catch {
-            return String(data);
-        }
-    }
-
-    _isRefreshableForbidden(error) {
-        const text = this._getErrorResponseText(error).toLowerCase();
+    async _isRefreshableForbidden(error) {
+        const text = (await getNormalizedErrorResponseText(error)).toLowerCase();
         if (!text) return false;
 
         const nonRefreshablePatterns = [
@@ -1829,20 +1864,51 @@ async saveCredentialsToFile(filePath, newData) {
         return tokenRelated && refreshableAuthState;
     }
 
-    _handleForbiddenCredentialError(error, context) {
-        const responseText = this._getErrorResponseText(error);
+    async _handleForbiddenCredentialError(error, context) {
+        const responseText = await getNormalizedErrorResponseText(error);
+        await this._applyForbiddenCredentialState(error, context, responseText);
+    }
+
+    _buildForbiddenReason(context, responseText, tokenRelated = false) {
+        return buildHttpErrorReason(403, context, responseText, {
+            suffix: tokenRelated ? 'token-related' : ''
+        });
+    }
+
+    _buildNormalizedForbiddenError(error, responseText) {
         const responseSnippet = responseText ? responseText.substring(0, 500) : '';
 
+        if (responseSnippet) {
+            logger.warn(`[Kiro] 403 response body: ${responseSnippet}`);
+        }
+
+        return responseText ? {
+            ...error,
+            response: {
+                ...error?.response,
+                data: responseText
+            }
+        } : error;
+    }
+
+    async _applyForbiddenCredentialState(error, context, responseText) {
+        const responseSnippet = responseText ? responseText.substring(0, 500) : '';
         if (responseSnippet) {
             logger.warn(`[Kiro] 403 response body (${context}): ${responseSnippet}`);
         }
 
-        if (this._isRefreshableForbidden(error)) {
+        const normalizedError = this._buildNormalizedForbiddenError(error, responseText);
+
+        if (await this._isRefreshableForbidden(normalizedError)) {
+            const reason = this._buildForbiddenReason(context, responseText, true);
             logger.info(`[Kiro] Received token-related 403 in ${context}. Marking credential as needs refresh.`);
-            this._markCredentialNeedRefresh(`403 Forbidden (${context}) - token-related${responseSnippet ? `: ${responseSnippet}` : ''}`, error);
+            this._markCredentialNeedRefresh(reason, error);
+            error.message = reason;
         } else {
+            const reason = this._buildForbiddenReason(context, responseText, false);
             logger.info(`[Kiro] Received non-refreshable 403 in ${context}. Marking credential as unhealthy without refresh.`);
-            this._markCredentialUnhealthy(`403 Forbidden (${context})${responseSnippet ? `: ${responseSnippet}` : ''}`, error);
+            this._markCredentialUnhealthy(reason, error);
+            error.message = reason;
         }
     }
 
@@ -1963,6 +2029,11 @@ async saveCredentialsToFile(filePath, newData) {
      */
     async _handle402Error(error, context = 'unknown') {
         logger.info(`[Kiro] Received 402 (Quota Exceeded) in ${context}. Verifying usage limits...`);
+        const { reason: verifiedReason } = await normalizeProviderErrorMessage(error, {
+            status: 402,
+            context,
+            suffix: 'quota exceeded'
+        });
         try {
             // Verify usage limits to confirm quota exhaustion
             const usageLimits = await this.getUsageLimits();
@@ -1971,12 +2042,17 @@ async saveCredentialsToFile(filePath, newData) {
             logger.info(`[Kiro] Quota confirmed exhausted: ${usageLimits?.usedCount}/${usageLimits?.limitCount}`);
             // Calculate recovery time: 1st day of next month at 00:00:00 UTC
             const nextMonth = this._getNextMonthFirstDay();
-            this._markCredentialUnhealthyWithRecovery('402 Payment Required - Quota Exhausted', error, nextMonth);
+            this._markCredentialUnhealthyWithRecovery(verifiedReason, error, nextMonth);
         } catch (usageError) {
             logger.warn('[Kiro] Failed to verify usage limits:', usageError.message);
             // If we can't verify, still mark as unhealthy with recovery time
             const nextMonth = this._getNextMonthFirstDay();
-            this._markCredentialUnhealthyWithRecovery('402 Payment Required - Quota Exceeded (unverified)', error, nextMonth);
+            const { reason: fallbackReason } = await normalizeProviderErrorMessage(error, {
+                status: 402,
+                context,
+                suffix: 'quota exceeded (unverified)'
+            });
+            this._markCredentialUnhealthyWithRecovery(fallbackReason, error, nextMonth);
         }
         // Mark error for credential switch without recording error count
         error.shouldSwitchCredential = true;
@@ -2300,6 +2376,11 @@ async saveCredentialsToFile(filePath, newData) {
             // Handle 401 (Unauthorized) - try to refresh token first
             if (status === 401 && !isRetry) {
                 logger.info('[Kiro] Received 401 in stream. Triggering background refresh via PoolManager...');
+                await normalizeProviderErrorMessage(error, {
+                    status: 401,
+                    context: 'stream',
+                    suffix: 'triggering auto-refresh'
+                });
                 
                 // 1. 先刷新 UUID
                 const newUuid = this._refreshUuid();
@@ -2323,7 +2404,7 @@ async saveCredentialsToFile(filePath, newData) {
             // Handle 403 (Forbidden). Most Kiro 403s are account/policy/quota/profile issues,
             // not expired access tokens, so do not blindly refresh.
             if (status === 403 && !isRetry) {
-                this._handleForbiddenCredentialError(error, 'stream');
+                await this._handleForbiddenCredentialError(error, 'stream');
                 // Mark error for credential switch without recording error count
                 error.shouldSwitchCredential = true;
                 error.skipErrorCount = true;
@@ -2333,6 +2414,7 @@ async saveCredentialsToFile(filePath, newData) {
             // Handle 429 (Too Many Requests) - wait baseDelay then switch credential
             if (status === 429) {
                 logger.info(`[Kiro] Received 429 (Too Many Requests) in stream. Waiting ${baseDelay}ms before switching credential...`);
+                await normalizeProviderErrorMessage(error, { status: 429, context: 'stream' });
                 await new Promise(resolve => setTimeout(resolve, baseDelay));
                 // Mark error for credential switch without recording error count
                 error.shouldSwitchCredential = true;
@@ -2343,6 +2425,7 @@ async saveCredentialsToFile(filePath, newData) {
             // Handle 5xx server errors - wait baseDelay then switch credential
             if (status >= 500 && status < 600) {
                 logger.info(`[Kiro] Received ${status} server error in stream. Waiting ${baseDelay}ms before switching credential...`);
+                await normalizeProviderErrorMessage(error, { status, context: 'stream' });
                 await new Promise(resolve => setTimeout(resolve, baseDelay));
                 // Mark error for credential switch without recording error count
                 error.shouldSwitchCredential = true;

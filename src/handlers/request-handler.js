@@ -1,7 +1,7 @@
 import deepmerge from 'deepmerge';
 import logger from '../utils/logger.js';
 import requestContext from '../utils/context.js';
-import { handleError, getClientIp } from '../utils/common.js';
+import { handleError, getClientIp, getRequestBody } from '../utils/common.js';
 import { handleUIApiRequests, serveStaticFiles } from '../services/ui-manager.js';
 import { isUIPath, isUIApiPath } from '../utils/ui-utils.js';
 import { handleAPIRequests } from '../services/api-manager.js';
@@ -24,24 +24,6 @@ function generateRequestId() {
 }
 
 /**
- * Parse request body as JSON
- */
-function parseRequestBody(req) {
-    return new Promise((resolve, reject) => {
-        let body = '';
-        req.on('data', chunk => { body += chunk.toString(); });
-        req.on('end', () => {
-            try {
-                resolve(body ? JSON.parse(body) : {});
-            } catch (e) {
-                reject(new Error('Invalid JSON in request body'));
-            }
-        });
-        req.on('error', reject);
-    });
-}
-
-/**
  * Main request handler. It authenticates the request, determines the endpoint type,
  * and delegates to the appropriate specialized handler function.
  * @param {Object} config - The server configuration
@@ -51,7 +33,7 @@ function parseRequestBody(req) {
 export function createRequestHandler(config, providerPoolManager) {
     return async function requestHandler(req, res) {
         // Generate unique request ID and set it in logger context
-        const clientIp = getClientIp(req);
+        const clientIp = getClientIp(req, config);
         const requestId = `${clientIp}:${generateRequestId()}`;
 
         return requestContext.run({ requestId }, async () => {
@@ -250,7 +232,7 @@ export function createRequestHandler(config, providerPoolManager) {
                     // Handle count_tokens requests (Anthropic API compatible)
                     if (path.includes('/count_tokens') && method === 'POST') {
                         try {
-                            const body = await parseRequestBody(req);
+                            const body = await getRequestBody(req, { maxBytes: 1024 * 1024 * 2 }); // Limit to 1MB
                             logger.info(`[Server] Handling count_tokens request for model: ${body.model}`);
 
                             // Use common utility method directly
