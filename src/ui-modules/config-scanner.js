@@ -32,6 +32,7 @@ export async function scanConfigFiles(currentConfig, providerPoolManager) {
     addToUsedPaths(usedPaths, currentConfig.CODEX_OAUTH_CREDS_FILE_PATH);
     addToUsedPaths(usedPaths, currentConfig.CONSENSUS_MCPORTER_CONFIG_PATH);
     addToUsedPaths(usedPaths, currentConfig.GROK_CLI_OAUTH_CREDS_FILE_PATH);
+    addToUsedPaths(usedPaths, currentConfig.OB1_OAUTH_CREDS_FILE_PATH);
 
     // 使用最新的提供商池数据
     let providerPools = currentConfig.providerPools;
@@ -51,6 +52,7 @@ export async function scanConfigFiles(currentConfig, providerPoolManager) {
                 addToUsedPaths(usedPaths, provider.CODEX_OAUTH_CREDS_FILE_PATH);
                 addToUsedPaths(usedPaths, provider.CONSENSUS_MCPORTER_CONFIG_PATH);
                 addToUsedPaths(usedPaths, provider.GROK_CLI_OAUTH_CREDS_FILE_PATH);
+                addToUsedPaths(usedPaths, provider.OB1_OAUTH_CREDS_FILE_PATH);
             }
         }
     }
@@ -363,6 +365,17 @@ function getFileUsageInfo(relativePath, fileName, usedPaths, currentConfig, prov
         });
     }
 
+    if (currentConfig.OB1_OAUTH_CREDS_FILE_PATH &&
+        (pathsEqual(relativePath, currentConfig.OB1_OAUTH_CREDS_FILE_PATH) ||
+         pathsEqual(relativePath, currentConfig.OB1_OAUTH_CREDS_FILE_PATH.replace(/\\/g, '/')))) {
+        usageInfo.usageType = 'main_config';
+        usageInfo.usageDetails.push({
+            type: 'Main Config',
+            location: 'OpenBlockLabs OB-1 OAuth credentials file path',
+            configKey: 'OB1_OAUTH_CREDS_FILE_PATH'
+        });
+    }
+
     // 检查提供商池中的使用情况
     const poolsToUse = providerPools || currentConfig.providerPools;
     if (poolsToUse) {
@@ -500,6 +513,22 @@ function getFileUsageInfo(relativePath, fileName, usedPaths, currentConfig, prov
                     isHealthy: provider.isHealthy !== false,
                     isDisabled: provider.isDisabled === true,
                     configKey: 'GROK_CLI_OAUTH_CREDS_FILE_PATH'
+                });
+            }
+
+            if (provider.OB1_OAUTH_CREDS_FILE_PATH &&
+                (pathsEqual(relativePath, provider.OB1_OAUTH_CREDS_FILE_PATH) ||
+                 pathsEqual(relativePath, provider.OB1_OAUTH_CREDS_FILE_PATH.replace(/\\/g, '/')))) {
+                providerUsages.push({
+                    type: 'Provider Pool',
+                    location: `OpenBlockLabs OB-1 OAuth credentials (node ${index + 1})`,
+                    providerType: providerType,
+                    providerIndex: index,
+                    nodeName: provider.customName,
+                    uuid: provider.uuid,
+                    isHealthy: provider.isHealthy !== false,
+                    isDisabled: provider.isDisabled === true,
+                    configKey: 'OB1_OAUTH_CREDS_FILE_PATH'
                 });
             }
             

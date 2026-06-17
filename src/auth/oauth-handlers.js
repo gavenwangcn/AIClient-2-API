@@ -33,5 +33,9 @@ export {
     refreshGrokCliTokensWithRetry,
     handleGrokCliOAuth,
     handleGrokCliOAuthCallback,
-    batchImportGrokCliTokensStream
+    batchImportGrokCliTokensStream,
+    // OpenBlockLabs OB-1 OAuth
+    handleOb1OAuth,
+    batchImportOb1TokensStream,
+    importOb1CredentialsFromHome
 } from './index.js';

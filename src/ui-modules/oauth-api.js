@@ -15,7 +15,10 @@ import {
     importAwsCredentials,
     handleConsensusOAuth,
     cancelConsensusMcporterAuth,
-    batchImportGrokTokensStream
+    batchImportGrokTokensStream,
+    handleOb1OAuth,
+    batchImportOb1TokensStream,
+    importOb1CredentialsFromHome
 } from '../auth/oauth-handlers.js';
 import { normalizeCodexExternalCredentials } from '../auth/codex-import-normalizer.js';
 
@@ -78,6 +81,10 @@ export async function handleGenerateAuthUrl(req, res, currentConfig, providerTyp
         } else if (providerType === 'grok-cli-oauth') {
             // Grok CLI OAuth（xAI OAuth2 + PKCE）
             const result = await handleGrokCliOAuth(currentConfig, options);
+            authUrl = result.authUrl;
+            authInfo = result.authInfo;
+        } else if (providerType === 'openblocklabs-oauth') {
+            const result = await handleOb1OAuth(currentConfig, options);
             authUrl = result.authUrl;
             authInfo = result.authInfo;
         } else {
@@ -408,6 +415,7 @@ export async function handleBatchImportGeminiTokens(req, res) {
 }
 
 /**
+/**
  * 批量导入 Codex Token（带实时进度 SSE）
  */
 export async function handleBatchImportCodexTokens(req, res) {
@@ -484,6 +492,7 @@ export async function handleBatchImportCodexTokens(req, res) {
 }
 
 /**
+/**
  * 批量导入 Grok CLI OAuth Token（带实时进度 SSE）
  */
 export async function handleBatchImportGrokCliTokens(req, res) {
@@ -553,6 +562,7 @@ export async function handleBatchImportGrokCliTokens(req, res) {
     }
 }
 
+/**
 /**
  * 导入 Codex 外部凭据格式（CPA / sub2api，带实时进度 SSE）
  */
@@ -727,6 +737,7 @@ export async function handleBatchImportGrokTokens(req, res) {
     }
 }
 
+/**
 /**
  * 导入 AWS SSO 凭据用于 Kiro（支持单个或批量导入）
  */
@@ -922,6 +933,76 @@ export async function handleImportAwsCredentials(req, res) {
     } catch (error) {
         logger.error('[Kiro AWS Import] Error:', error);
         // 如果已经开始发送 SSE，则发送错误事件
+        if (res.headersSent) {
+            res.write(`event: error\n`);
+            res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);
+            res.end();
+        } else {
+            res.writeHead(500, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: error.message
+            }));
+        }
+        return true;
+    }
+}
+
+/**
+ * 批量导入 OpenBlockLabs OB-1 Token（带实时进度 SSE）
+ */
+export async function handleBatchImportOb1Tokens(req, res) {
+    try {
+        const body = await getRequestBody(req);
+        const { tokens, skipDuplicateCheck } = body;
+
+        if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({
+                success: false,
+                error: 'tokens array is required and must not be empty'
+            }));
+            return true;
+        }
+
+        logger.info(`[OB1 Batch Import] Starting batch import with ${tokens.length} token(s)...`);
+
+        res.writeHead(200, {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-cache',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+
+        const sendSSE = (event, data) => {
+            res.write(`event: ${event}\n`);
+            res.write(`data: ${JSON.stringify(data)}\n\n`);
+        };
+
+        sendSSE('start', { total: tokens.length });
+
+        const result = await batchImportOb1TokensStream(
+            tokens,
+            (progress) => {
+                sendSSE('progress', progress);
+            },
+            !!skipDuplicateCheck
+        );
+
+        logger.info(`[OB1 Batch Import] Completed: ${result.success} success, ${result.failed} failed`);
+
+        sendSSE('complete', {
+            success: true,
+            total: result.total,
+            successCount: result.success,
+            failedCount: result.failed,
+            details: result.details
+        });
+
+        res.end();
+        return true;
+    } catch (error) {
+        logger.error('[OB1 Batch Import] Error:', error);
         if (res.headersSent) {
             res.write(`event: error\n`);
             res.write(`data: ${JSON.stringify({ error: error.message })}\n\n`);

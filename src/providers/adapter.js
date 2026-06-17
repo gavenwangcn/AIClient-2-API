@@ -11,6 +11,7 @@ import { ForwardApiService } from './forward/forward-core.js';
 import { GrokApiService } from './grok/grok-core.js';
 import { ConsensusApiService } from './consensus/consensus-core.js';
 import { GrokCliApiService } from './grok/grok-cli-core.js';
+import { Ob1ApiService } from './openblocklabs/ob1-core.js';
 import { MODEL_PROVIDER } from '../utils/constants.js';
 import logger from '../utils/logger.js';
 
@@ -819,6 +820,67 @@ export class GrokCliApiServiceAdapter extends ApiServiceAdapter {
     }
 }
 
+// OpenBlockLabs OB-1 API 服务适配器
+export class Ob1ApiServiceAdapter extends ApiServiceAdapter {
+    constructor(config) {
+        super();
+        this.ob1ApiService = new Ob1ApiService(config);
+    }
+
+    async generateContent(model, requestBody) {
+        if (!this.ob1ApiService.isInitialized) {
+            await this.ob1ApiService.initialize();
+        }
+        return this.ob1ApiService.generateContent(model, requestBody);
+    }
+
+    async *generateContentStream(model, requestBody) {
+        if (!this.ob1ApiService.isInitialized) {
+            await this.ob1ApiService.initialize();
+        }
+        yield* this.ob1ApiService.generateContentStream(model, requestBody);
+    }
+
+    async listModels() {
+        if (!this.ob1ApiService.isInitialized) {
+            await this.ob1ApiService.initialize();
+        }
+        return this.ob1ApiService.listModels();
+    }
+
+    async refreshToken() {
+        if (!this.ob1ApiService.isInitialized) {
+            await this.ob1ApiService.initialize();
+        }
+        if (this.isExpiryDateNear()) {
+            logger.info('[OB1] Expiry date is near, refreshing token...');
+            await this.ob1ApiService.initializeAuth(false);
+            return true;
+        }
+        return false;
+    }
+
+    async forceRefreshToken() {
+        if (!this.ob1ApiService.isInitialized) {
+            await this.ob1ApiService.initialize();
+        }
+        logger.info('[OB1] Force refreshing token...');
+        await this.ob1ApiService.initializeAuth(true);
+        return true;
+    }
+
+    isExpiryDateNear() {
+        return this.ob1ApiService.isExpiryDateNear();
+    }
+
+    async getUsageLimits() {
+        if (!this.ob1ApiService.isInitialized) {
+            await this.ob1ApiService.initialize();
+        }
+        return this.ob1ApiService.getUsageLimits();
+    }
+}
+
 // 注册所有内置适配器
 registerAdapter(MODEL_PROVIDER.OPENAI_CUSTOM, OpenAIApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.ATLASCLOUD, OpenAIApiServiceAdapter);
@@ -831,6 +893,7 @@ registerAdapter(MODEL_PROVIDER.CODEX_API, CodexApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.GROK_WEB, GrokApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.CONSENSUS_MCP, ConsensusApiServiceAdapter);
 registerAdapter(MODEL_PROVIDER.GROK_CLI, GrokCliApiServiceAdapter);
+registerAdapter(MODEL_PROVIDER.OPENBLOCKLABS, Ob1ApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.FORWARD_API, ForwardApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.QWEN_API, QwenApiServiceAdapter);
 // registerAdapter(MODEL_PROVIDER.IFLOW_API, IFlowApiServiceAdapter);

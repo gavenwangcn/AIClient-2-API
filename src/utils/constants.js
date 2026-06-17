@@ -71,6 +71,7 @@ export const MODEL_PROVIDER = {
     /** Consensus MCP（论文检索，经 mcporter 代理官方 MCP） */
     CONSENSUS_MCP: 'consensus-mcp-oauth',
     GROK_CLI: 'grok-cli-oauth',
+    OPENBLOCKLABS: 'openblocklabs-oauth',
     AUTO: 'auto',
 };
 

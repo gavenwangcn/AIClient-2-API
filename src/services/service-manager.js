@@ -607,6 +607,7 @@ export async function getProviderStatus(config, options = {}) {
         'forward-api': 'FORWARD_BASE_URL',
         'grok-web': 'GROK_COOKIE_TOKEN',
         'grok-cli-oauth': 'GROK_CLI_OAUTH_CREDS_FILE_PATH',
+        'openblocklabs-oauth': 'OB1_OAUTH_CREDS_FILE_PATH',
         'openai-codex-oauth': 'CODEX_OAUTH_CREDS_FILE_PATH',
         'consensus-mcp-oauth': 'CONSENSUS_MCPORTER_CONFIG_PATH'
     };

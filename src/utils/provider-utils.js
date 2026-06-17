@@ -102,6 +102,17 @@ export const PROVIDER_MAPPINGS = [
         urlKeys: ['GROK_CLI_BASE_URL']
     },
     {
+        // OpenBlockLabs OB-1 OAuth 配置
+        dirName: 'ob1',
+        patterns: ['configs/ob1/', '/ob1/', '/.ob1/'],
+        providerType: 'openblocklabs-oauth',
+        credPathKey: 'OB1_OAUTH_CREDS_FILE_PATH',
+        defaultCheckModel: 'anthropic/claude-opus-4.6',
+        displayName: 'OpenBlockLabs OB-1',
+        needsProjectId: false,
+        urlKeys: ['OB1_API_BASE', 'OB1_WORKOS_AUTH_URL']
+    },
+    {
         // Grok Web 配置
         dirName: 'grok',
         patterns: ['configs/grok/', '/grok/'],

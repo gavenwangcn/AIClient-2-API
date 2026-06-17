@@ -50,3 +50,10 @@ export {
     batchImportGrokCliTokensStream
 } from './grok-cli-oauth.js';
 
+// OpenBlockLabs OB-1 OAuth
+export {
+    handleOb1OAuth,
+    batchImportOb1TokensStream,
+    importOb1CredentialsFromHome
+} from './ob1-oauth.js';
+

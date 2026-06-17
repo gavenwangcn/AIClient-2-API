@@ -61,6 +61,7 @@ export class ProviderPoolManager {
         'forward-api': 'gpt-4o-mini',
         'consensus-mcp-oauth': 'consensus-paper-search',
         'grok-cli-oauth': 'grok-3-mini',
+        'openblocklabs-oauth': 'anthropic/claude-opus-4.6',
         'grok-web': 'grok-4.1-mini',
     };
 
@@ -161,6 +162,8 @@ export class ProviderPoolManager {
                     configPath = config.CODEX_OAUTH_CREDS_FILE_PATH;
                 } else if (providerType.startsWith('grok-cli')) {
                     configPath = config.GROK_CLI_OAUTH_CREDS_FILE_PATH;
+                } else if (providerType.startsWith('openblocklabs')) {
+                    configPath = config.OB1_OAUTH_CREDS_FILE_PATH;
                 }
                 
                 // logger.info(`Checking node ${this._getDisplayName(config)} (${providerType}) expiry date... configPath: ${configPath}`);

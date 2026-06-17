@@ -20,6 +20,7 @@ export class UsageService {
             [MODEL_PROVIDER.CODEX_API]: this.getCodexUsage.bind(this),
             [MODEL_PROVIDER.GROK_WEB]: this.getGrokUsage.bind(this),
             [MODEL_PROVIDER.GROK_CLI]: this.getGrokCliUsage.bind(this),
+            [MODEL_PROVIDER.OPENBLOCKLABS]: this.getOb1Usage.bind(this),
         };
 
         // 映射提供商到对应的格式化函数
@@ -30,6 +31,7 @@ export class UsageService {
             [MODEL_PROVIDER.CODEX_API]: formatCodexUsage,
             [MODEL_PROVIDER.GROK_WEB]: formatGrokUsage,
             [MODEL_PROVIDER.GROK_CLI]: formatGrokCliUsage,
+            [MODEL_PROVIDER.OPENBLOCKLABS]: formatOb1Usage,
         };
     }
 
@@ -194,6 +196,13 @@ export class UsageService {
      */
     async getGrokCliUsage(uuid = null) {
         return this._getRawUsageFromAdapter(MODEL_PROVIDER.GROK_CLI, uuid);
+    }
+
+    /**
+     * 获取 OpenBlockLabs OB-1 提供商的用量信息
+     */
+    async getOb1Usage(uuid = null) {
+        return this._getRawUsageFromAdapter(MODEL_PROVIDER.OPENBLOCKLABS, uuid);
     }
 
     /**
@@ -645,6 +654,45 @@ export function formatGrokCliUsage(usageData) {
                 unit: 'status',
                 status: 'normal',
                 resetAt: usageData.expiresAt || null
+            }
+        ],
+        raw: usageData
+    };
+}
+
+/**
+ * 格式化 OpenBlockLabs OB-1 用量。
+ */
+export function formatOb1Usage(usageData) {
+    if (!usageData) return null;
+
+    const expiresAt = usageData.expires_at || null;
+    const active = usageData.active !== false;
+
+    return {
+        summary: {
+            usedPercent: active ? 0 : 100,
+            status: active ? 'normal' : 'danger',
+            resetAt: expiresAt,
+            plan: usageData.org_name || 'OpenBlockLabs',
+            planClass: getPlanClass(usageData.org_name || 'OpenBlockLabs'),
+            unit: 'status',
+            totalUsed: active ? 0 : 1,
+            totalLimit: 1
+        },
+        user: {
+            email: usageData.email || null
+        },
+        items: [
+            {
+                id: 'credential',
+                label: 'OAuth Credential',
+                used: active ? 0 : 1,
+                limit: 1,
+                percent: active ? 0 : 100,
+                unit: 'status',
+                status: active ? 'normal' : 'danger',
+                resetAt: expiresAt
             }
         ],
         raw: usageData

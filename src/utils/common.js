@@ -535,6 +535,10 @@ export function getProtocolPrefix(provider) {
     if (provider === 'grok-cli-oauth' || provider.startsWith('grok-cli-oauth-')) {
         return MODEL_PROTOCOL_PREFIX.OPENAI_RESPONSES;
     }
+    // OpenBlockLabs OB-1 uses OpenAI-compatible chat completions API.
+    if (provider === 'openblocklabs-oauth' || provider.startsWith('openblocklabs-oauth-')) {
+        return MODEL_PROTOCOL_PREFIX.OPENAI;
+    }
     // Special case for AtlasCloud - it uses openai protocol
     if (provider === 'atlascloud' || provider.startsWith('atlascloud-')) {
         return MODEL_PROTOCOL_PREFIX.OPENAI;

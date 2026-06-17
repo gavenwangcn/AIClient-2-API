@@ -142,6 +142,11 @@ export const PROVIDER_MODELS = {
     'consensus-mcp-oauth': [
         'consensus-paper-search',
     ],
+    'openblocklabs-oauth': [
+        'anthropic/claude-opus-4.6',
+        'anthropic/claude-sonnet-4.6',
+        'anthropic/claude-haiku-4.5',
+    ],
     'grok-web': [
         'grok-4.1-mini',
         'grok-4.1-thinking',
