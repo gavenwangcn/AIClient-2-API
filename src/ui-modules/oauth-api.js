@@ -18,7 +18,8 @@ import {
     batchImportGrokTokensStream,
     handleOb1OAuth,
     batchImportOb1TokensStream,
-    importOb1CredentialsFromHome
+    importOb1CredentialsFromHome,
+    normalizeOb1BatchImportItems,
 } from '../auth/oauth-handlers.js';
 import { normalizeCodexExternalCredentials } from '../auth/codex-import-normalizer.js';
 
@@ -954,18 +955,20 @@ export async function handleImportAwsCredentials(req, res) {
 export async function handleBatchImportOb1Tokens(req, res) {
     try {
         const body = await getRequestBody(req);
-        const { tokens, skipDuplicateCheck } = body;
+        const { tokens, payload, skipDuplicateCheck } = body;
+        const importSource = payload !== undefined ? payload : tokens;
 
-        if (!tokens || !Array.isArray(tokens) || tokens.length === 0) {
+        const importItems = normalizeOb1BatchImportItems(importSource);
+        if (!importItems.length) {
             res.writeHead(400, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({
                 success: false,
-                error: 'tokens array is required and must not be empty'
+                error: 'tokens/payload is required and must contain importable OB-1 accounts'
             }));
             return true;
         }
 
-        logger.info(`[OB1 Batch Import] Starting batch import with ${tokens.length} token(s)...`);
+        logger.info(`[OB1 Batch Import] Starting batch import with ${importItems.length} item(s)...`);
 
         res.writeHead(200, {
             'Content-Type': 'text/event-stream',
@@ -979,10 +982,10 @@ export async function handleBatchImportOb1Tokens(req, res) {
             res.write(`data: ${JSON.stringify(data)}\n\n`);
         };
 
-        sendSSE('start', { total: tokens.length });
+        sendSSE('start', { total: importItems.length });
 
         const result = await batchImportOb1TokensStream(
-            tokens,
+            importItems,
             (progress) => {
                 sendSSE('progress', progress);
             },

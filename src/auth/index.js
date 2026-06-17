@@ -54,6 +54,7 @@ export {
 export {
     handleOb1OAuth,
     batchImportOb1TokensStream,
-    importOb1CredentialsFromHome
+    importOb1CredentialsFromHome,
+    normalizeOb1BatchImportItems,
 } from './ob1-oauth.js';
 

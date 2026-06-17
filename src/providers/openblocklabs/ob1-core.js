@@ -60,17 +60,67 @@ function normalizeCredentialData(raw = {}) {
     const expiresAt = parseExpirySeconds(
         raw.expires_at ?? raw.expiresAt ?? oauth?.expires_at ?? oauth?.expiresAt
     );
+    const accessToken = raw.access_token
+        || raw.accessToken
+        || raw.token
+        || raw.session_token
+        || oauth?.access_token
+        || '';
+    const refreshToken = raw.refresh_token || raw.refreshToken || oauth?.refresh_token || '';
 
     return {
         email: raw.email || user.email || '',
-        access_token: raw.access_token || oauth?.access_token || '',
-        refresh_token: raw.refresh_token || oauth?.refresh_token || '',
+        password: raw.password || '',
+        access_token: accessToken,
+        refresh_token: refreshToken,
         expires_at: expiresAt || 0,
         org_id: raw.org_id || oauth?.organization_id || '',
         org_name: raw.org_name || '',
         user_id: raw.user_id || user.id || '',
         user_data: raw.user_data || user || {},
+        access_token_only: raw.access_token_only === true
+            || Boolean(accessToken && !refreshToken),
     };
+}
+
+/**
+ * 按 ob12api 实际可用字段补全导入凭据（不依赖 password 调 API）。
+ */
+export function finalizeOb1ImportedCredentials(credentials) {
+    const result = { ...credentials };
+
+    // 对齐 ob12api Account 结构，refresh_token 字段始终存在（可为空）
+    if (result.refresh_token == null) {
+        result.refresh_token = '';
+    }
+
+    if (result.access_token && !result.expires_at) {
+        // ob12api 用 expires_at 判断 active；仅有 access_token 时给默认有效期
+        result.expires_at = Math.floor(Date.now() / 1000) + 365 * 24 * 3600;
+    }
+
+    if (result.refresh_token) {
+        result.access_token_only = false;
+    } else if (result.access_token) {
+        result.access_token_only = true;
+    }
+
+    if (result.email && !result.user_data?.email) {
+        result.user_data = {
+            ...(result.user_data || {}),
+            email: result.email,
+        };
+    }
+
+    return result;
+}
+
+function looksLikeOb1AccessToken(value) {
+    const token = String(value || '').trim();
+    if (!token) return false;
+    if (token.startsWith('Fe26.')) return true;
+    if (token.length > 80 && !token.startsWith('rt_')) return true;
+    return false;
 }
 
 async function refreshOb1Tokens(refreshToken, config = {}) {
@@ -287,6 +337,9 @@ export class Ob1ApiService {
     }
 
     isExpiryDateNear() {
+        if (this.credentials?.access_token_only && !this.credentials?.refresh_token) {
+            return false;
+        }
         const expiresAt = this.credentials?.expires_at;
         if (!expiresAt) return true;
         const nowSeconds = Math.floor(Date.now() / 1000);
@@ -295,6 +348,9 @@ export class Ob1ApiService {
 
     async initializeAuth(force = false) {
         if (!this.credentials?.refresh_token) {
+            if (this.credentials?.access_token_only || this.credentials?.access_token) {
+                return false;
+            }
             throw new Error('[OB1] refresh_token is missing');
         }
         if (!force && !this.isExpiryDateNear()) {

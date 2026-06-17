@@ -37,5 +37,6 @@ export {
     // OpenBlockLabs OB-1 OAuth
     handleOb1OAuth,
     batchImportOb1TokensStream,
-    importOb1CredentialsFromHome
+    importOb1CredentialsFromHome,
+    normalizeOb1BatchImportItems,
 } from './index.js';

@@ -11,6 +11,7 @@ import { getProxyConfigForProvider } from '../utils/proxy-utils.js';
 import {
     fetchOb1Organization,
     normalizeCredentialData,
+    finalizeOb1ImportedCredentials,
     refreshOb1Tokens,
     OB1_DEFAULT_WORKOS_AUTH_URL,
     OB1_DEFAULT_WORKOS_CLIENT_ID,
@@ -136,14 +137,14 @@ async function pollOb1DeviceAuth(deviceCode, interval = 5, expiresIn = 600, task
         if (response.ok && data.access_token) {
             const user = data.user || {};
             const expiresInSeconds = Number(data.expires_in) || 3600;
-            const credentials = normalizeCredentialData({
+            const credentials = finalizeOb1ImportedCredentials(normalizeCredentialData({
                 email: user.email || '',
                 access_token: data.access_token,
                 refresh_token: data.refresh_token || '',
                 expires_at: Math.floor(Date.now() / 1000) + expiresInSeconds,
                 user_id: user.id || '',
                 user_data: user,
-            });
+            }));
 
             const org = await fetchOb1Organization(
                 credentials.access_token,
@@ -267,15 +268,113 @@ export async function handleOb1OAuth(currentConfig, options = {}) {
     };
 }
 
+/**
+ * 将 ob12api 风格的导入数据规范化为批量导入项列表。
+ * 支持：
+ * - accounts.json：账号对象数组
+ * - { "accounts": [...] }：管理面板/API 导入格式
+ * - { "refresh_tokens": [...] }：push 接口格式
+ * - CSV/TSV：email,password,access_token,refresh_token（refresh_token 可为空）
+ * - refresh_token 字符串数组 / 每行一个 token 的纯文本
+ * - 单个账号对象：{ email, password?, access_token, refresh_token? }
+ */
+function parseOb1DelimitedRows(text) {
+    const lines = text.split(/\r?\n/).map(line => line.trim()).filter(Boolean);
+    if (lines.length < 2) return null;
+
+    const delimiter = lines[0].includes('\t')
+        ? '\t'
+        : (lines[0].includes(',') ? ',' : null);
+    if (!delimiter) return null;
+
+    const headers = lines[0].split(delimiter).map(header => header.trim().toLowerCase());
+    const emailIdx = headers.findIndex(header => header === 'email' || header === '邮箱');
+    const passwordIdx = headers.findIndex(header => header === 'password' || header === '密码');
+    const tokenIdx = headers.findIndex(header =>
+        ['access_token', 'access token', 'token', 'accesstoken', 'access-token'].includes(header)
+    );
+    const refreshTokenIdx = headers.findIndex(header =>
+        ['refresh_token', 'refresh token', 'refreshtoken', 'refresh-token', 'rt'].includes(header)
+    );
+
+    if (emailIdx < 0 && tokenIdx < 0 && refreshTokenIdx < 0) return null;
+
+    return lines.slice(1).map(line => {
+        const cols = line.split(delimiter);
+        return {
+            email: emailIdx >= 0 ? (cols[emailIdx] || '').trim() : '',
+            password: passwordIdx >= 0 ? (cols[passwordIdx] || '').trim() : '',
+            access_token: tokenIdx >= 0 ? (cols[tokenIdx] || '').trim() : '',
+            refresh_token: refreshTokenIdx >= 0 ? (cols[refreshTokenIdx] || '').trim() : '',
+        };
+    }).filter(row => row.email || row.access_token || row.refresh_token);
+}
+
+function looksLikeOb1AccessToken(value) {
+    const token = String(value || '').trim();
+    if (!token) return false;
+    if (token.startsWith('Fe26.')) return true;
+    if (token.length > 80 && !token.startsWith('rt_')) return true;
+    return false;
+}
+
+export function normalizeOb1BatchImportItems(input) {
+    let data = input;
+
+    if (typeof data === 'string') {
+        const trimmed = data.trim();
+        if (!trimmed) return [];
+
+        const csvRows = parseOb1DelimitedRows(trimmed);
+        if (csvRows?.length) {
+            return csvRows;
+        }
+
+        try {
+            data = JSON.parse(trimmed);
+        } catch {
+            return trimmed
+                .split('\n')
+                .map(line => line.trim())
+                .filter(Boolean);
+        }
+    }
+
+    if (Array.isArray(data)) {
+        return data;
+    }
+
+    if (data && typeof data === 'object') {
+        if (Array.isArray(data.accounts)) {
+            return data.accounts;
+        }
+        if (Array.isArray(data.refresh_tokens)) {
+            return data.refresh_tokens;
+        }
+        if (Array.isArray(data.tokens)) {
+            return data.tokens;
+        }
+        return [data];
+    }
+
+    return [];
+}
+
 export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplicateCheck = false) {
+    const importItems = normalizeOb1BatchImportItems(tokens);
     const result = {
-        total: tokens.length,
+        total: importItems.length,
         success: 0,
         failed: 0,
         details: [],
     };
 
+    if (!importItems.length) {
+        return result;
+    }
+
     const existingRefreshTokens = new Set();
+    const existingEmails = new Set();
     if (!skipDuplicateCheck) {
         const targetDir = path.join(process.cwd(), OB1_OAUTH_CONFIG.credentialsDir);
         if (fs.existsSync(targetDir)) {
@@ -287,6 +386,9 @@ export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplica
                     if (normalized.refresh_token) {
                         existingRefreshTokens.add(normalized.refresh_token);
                     }
+                    if (normalized.email) {
+                        existingEmails.add(normalized.email.toLowerCase());
+                    }
                 } catch {
                     // ignore invalid files
                 }
@@ -294,11 +396,11 @@ export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplica
         }
     }
 
-    for (let index = 0; index < tokens.length; index += 1) {
-        const item = tokens[index];
+    for (let index = 0; index < importItems.length; index += 1) {
+        const item = importItems[index];
         const progress = {
             index: index + 1,
-            total: tokens.length,
+            total: importItems.length,
             current: null,
             successCount: result.success,
             failedCount: result.failed,
@@ -307,26 +409,34 @@ export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplica
         try {
             let credentials;
             if (typeof item === 'string') {
-                const refreshToken = item.trim();
-                if (!refreshToken) {
-                    throw new Error('refresh_token is empty');
+                const token = item.trim();
+                if (!token) {
+                    throw new Error('token is empty');
                 }
-                if (!skipDuplicateCheck && existingRefreshTokens.has(refreshToken)) {
-                    throw new Error('duplicate refresh_token');
+
+                if (looksLikeOb1AccessToken(token)) {
+                    credentials = finalizeOb1ImportedCredentials(normalizeCredentialData({
+                        access_token: token,
+                    }));
+                } else {
+                    if (!skipDuplicateCheck && existingRefreshTokens.has(token)) {
+                        throw new Error('duplicate refresh_token');
+                    }
+                    const refreshed = await refreshOb1Tokens(token, CONFIG);
+                    credentials = finalizeOb1ImportedCredentials(normalizeCredentialData({
+                        refresh_token: refreshed.refresh_token,
+                        access_token: refreshed.access_token,
+                        expires_at: refreshed.expires_at,
+                    }));
                 }
-                const refreshed = await refreshOb1Tokens(refreshToken, CONFIG);
-                credentials = normalizeCredentialData({
-                    refresh_token: refreshed.refresh_token,
-                    access_token: refreshed.access_token,
-                    expires_at: refreshed.expires_at,
-                });
             } else {
-                credentials = normalizeCredentialData(item);
+                credentials = finalizeOb1ImportedCredentials(normalizeCredentialData(item));
                 if (!credentials.access_token && credentials.refresh_token) {
                     const refreshed = await refreshOb1Tokens(credentials.refresh_token, CONFIG);
                     credentials.access_token = refreshed.access_token;
                     credentials.refresh_token = refreshed.refresh_token;
                     credentials.expires_at = refreshed.expires_at;
+                    credentials.access_token_only = false;
                 }
             }
 
@@ -334,7 +444,13 @@ export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplica
                 throw new Error('access_token or refresh_token is required');
             }
 
-            if (!skipDuplicateCheck && credentials.refresh_token && existingRefreshTokens.has(credentials.refresh_token)) {
+            if (!skipDuplicateCheck && credentials.email &&
+                existingEmails.has(credentials.email.toLowerCase())) {
+                throw new Error(`duplicate email: ${credentials.email}`);
+            }
+
+            if (!skipDuplicateCheck && credentials.refresh_token &&
+                existingRefreshTokens.has(credentials.refresh_token)) {
                 throw new Error('duplicate refresh_token');
             }
 
@@ -348,6 +464,9 @@ export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplica
             const relativePath = path.relative(process.cwd(), credPath);
             if (credentials.refresh_token) {
                 existingRefreshTokens.add(credentials.refresh_token);
+            }
+            if (credentials.email) {
+                existingEmails.add(credentials.email.toLowerCase());
             }
 
             progress.current = {
