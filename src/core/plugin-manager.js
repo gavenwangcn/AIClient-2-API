@@ -20,13 +20,14 @@ import {
     validatePluginExport,
     validatePluginId
 } from './plugin-security.js';
+import { getUserPluginsDir } from '../utils/plugin-paths.js';
 
 // 插件配置文件路径
 const PLUGINS_CONFIG_FILE = path.join(process.cwd(), 'configs', 'plugins.json');
 
 // 插件目录
 const BUILTIN_PLUGINS_DIR = path.join(process.cwd(), 'src', 'plugins');
-const USER_PLUGINS_DIR = path.join(process.cwd(), 'src', 'plugins-user');
+const USER_PLUGINS_DIR = getUserPluginsDir();
 
 // 默认禁用的插件列表
 const DEFAULT_DISABLED_PLUGINS = ['api-potluck', 'ai-monitor', 'model-usage-stats', 'ip-node-proxy'];

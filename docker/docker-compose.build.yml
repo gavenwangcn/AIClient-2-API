@@ -20,9 +20,10 @@ services:
       - ../logs:/app/logs
       # mcporter OAuth 持久化：Linux 下 vault 为 $HOME/.mcporter/credentials.json（含 access_token / refresh_token）
       - ../mcporter-data:/app/.mcporter
-      - ../plugins:/app/src/plugins-user
+      - ../plugins:/app/plugins-user
     environment:
       - ARGS=
+      - USER_PLUGINS_DIR=/app/plugins-user
       # 与 Dockerfile 一致，使 mcporter 将 ~/.mcporter 落在 /app/.mcporter 并随卷持久化
       - HOME=/app
       # 固定 OAuth 回调 URL；API 启动后长期监听该端口（共享 Hub）；生成授权时仅注册处理函数，不关闭监听

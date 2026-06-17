@@ -66,8 +66,8 @@ USER root
 
 # 日志目录：应用日志 + SQLite 全链路追踪库（默认 ./logs/aiclient2api-trace.db，建议挂载卷持久化）
 # mcporter：OAuth vault 与配置缓存目录（挂载卷到此处可长期保存 access/refresh token）
-# plugins-user：须在镜像内预先创建，否则 bind mount 到 /app/src/plugins-user 会因 overlay 只读层报错
-RUN mkdir -p /app/logs /app/.mcporter /app/src/plugins-user
+# plugins-user：挂载到 /app/plugins-user（勿挂到 /app/src 下，overlay 只读会导致 bind mount 失败）
+RUN mkdir -p /app/logs /app/.mcporter /app/plugins-user
 
 # 暴露端口
 EXPOSE 3000 8085 8086 19876-19880

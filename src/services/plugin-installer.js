@@ -7,6 +7,7 @@ import dns from 'dns/promises';
 import net from 'net';
 import logger from '../utils/logger.js';
 import { getPluginManager } from '../core/plugin-manager.js';
+import { getUserPluginsDir } from '../utils/plugin-paths.js';
 import {
     assertPathInside,
     normalizePluginArchiveEntryName,
@@ -17,7 +18,7 @@ import {
 
 const DEFAULT_MARKET_URL = 'https://source.hex2077.dev/files/market.json';
 const LOCAL_MARKET_FILE = path.join(process.cwd(), 'configs', 'market.json');
-const PLUGINS_DIR = path.join(process.cwd(), 'src', 'plugins-user');
+const PLUGINS_DIR = getUserPluginsDir();
 const MAX_PLUGIN_ZIP_BYTES = 10 * 1024 * 1024;
 const MAX_DOWNLOAD_REDIRECTS = 5;
 

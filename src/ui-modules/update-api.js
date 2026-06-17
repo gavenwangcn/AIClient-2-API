@@ -10,6 +10,7 @@ import { CONFIG } from '../core/config-manager.js';
 import { parseProxyUrl } from '../utils/proxy-utils.js';
 import { getRequestBody } from '../utils/common.js';
 import { isValidVersionTag } from '../utils/version-tag.js';
+import { getUserPluginsDir } from '../utils/plugin-paths.js';
 
 const execAsync = promisify(exec);
 const execFileAsync = promisify(execFile);
@@ -463,7 +464,7 @@ async function performTarballUpdate(localVersion, latestTag) {
     const tarballPath = path.join(tempDir, 'update.tar.gz');
     
     // 在 try 块外部声明变量，确保 catch 块可以访问并进行灾难恢复
-    const pluginsUserPath = path.join(appDir, 'src', 'plugins-user');
+    const pluginsUserPath = getUserPluginsDir(appDir);
     const pluginsUserBackupPath = path.join(tempDir, 'plugins-user_backup');
     let hasPluginsUserBackup = false;
     
@@ -591,7 +592,7 @@ async function performTarballUpdate(localVersion, latestTag) {
         
         // 7.5 恢复备份的 plugins-user 目录
         if (hasPluginsUserBackup) {
-            const targetPluginsUserPath = path.join(appDir, 'src', 'plugins-user');
+            const targetPluginsUserPath = getUserPluginsDir(appDir);
             logger.info(`[Update] Restoring plugins-user to ${targetPluginsUserPath}...`);
             if (existsSync(targetPluginsUserPath)) {
                 await fs.rm(targetPluginsUserPath, { recursive: true, force: true });
@@ -643,7 +644,7 @@ async function performTarballUpdate(localVersion, latestTag) {
         // 灾难恢复：如果备份了 plugins-user 且升级失败，尝试将其移回原位
         try {
             if (hasPluginsUserBackup && existsSync(pluginsUserBackupPath)) {
-                const targetPluginsUserPath = path.join(appDir, 'src', 'plugins-user');
+                const targetPluginsUserPath = getUserPluginsDir(appDir);
                 logger.info(`[Update] Update failed. Restoring plugins-user to original location for disaster recovery...`);
                 // 确保目标父目录 src 存在
                 await fs.mkdir(path.dirname(targetPluginsUserPath), { recursive: true });
