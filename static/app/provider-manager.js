@@ -4159,7 +4159,7 @@ function getAuthFilePath(provider) {
         'openai-qwen-oauth': '~/.qwen/oauth_creds.json',
         'claude-kiro-oauth': '~/.aws/sso/cache/kiro-auth-token.json',
         'openai-iflow': '~/.iflow/oauth_creds.json',
-        'openblocklabs-oauth': '~/.ob1/credentials.json',
+        'openblocklabs-oauth': 'configs/ob1/*.json',
         'consensus-mcp-oauth': 'configs/consensus/mcporter.json'
     };
     return authFilePaths[provider] || (getCurrentLanguage() === 'en-US' ? 'Unknown Path' : '未知路径');

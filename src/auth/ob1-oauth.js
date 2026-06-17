@@ -78,10 +78,27 @@ function sanitizeCredentialFilenamePart(value) {
     return sanitized || 'default';
 }
 
+async function linkOb1CredentialToProviderPool(relativePath) {
+    if (!relativePath) return;
+    await autoLinkProviderConfigs(CONFIG, {
+        onlyCurrentCred: true,
+        credPath: relativePath,
+    });
+}
+
+function resolveOb1CredentialsDir(options = {}) {
+    if (options.providerDir) {
+        const providerDir = String(options.providerDir).replace(/^[\\/]+/, '');
+        if (providerDir.startsWith('configs')) {
+            return path.join(process.cwd(), providerDir);
+        }
+        return path.join(process.cwd(), 'configs', providerDir);
+    }
+    return path.join(process.cwd(), OB1_OAUTH_CONFIG.credentialsDir);
+}
+
 function buildCredentialPath(email, options = {}) {
-    const targetDir = options.providerDir
-        ? path.join(process.cwd(), options.providerDir)
-        : path.join(process.cwd(), OB1_OAUTH_CONFIG.credentialsDir);
+    const targetDir = resolveOb1CredentialsDir(options);
     const safeEmail = sanitizeCredentialFilenamePart(email || 'default');
     const timestamp = Date.now();
     return path.join(targetDir, `ob1-${safeEmail}-${timestamp}.json`);
@@ -170,10 +187,7 @@ async function pollOb1DeviceAuth(deviceCode, interval = 5, expiresIn = 600, task
                 timestamp: new Date().toISOString(),
             });
 
-            await autoLinkProviderConfigs(CONFIG, {
-                onlyCurrentCred: true,
-                credPath: relativePath,
-            });
+            await linkOb1CredentialToProviderPool(relativePath);
 
             return credentials;
         }
@@ -462,6 +476,7 @@ export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplica
 
             const credPath = await saveOb1Credentials(credentials);
             const relativePath = path.relative(process.cwd(), credPath);
+            await linkOb1CredentialToProviderPool(relativePath);
             if (credentials.refresh_token) {
                 existingRefreshTokens.add(credentials.refresh_token);
             }
@@ -492,7 +507,11 @@ export async function batchImportOb1TokensStream(tokens, onProgress, skipDuplica
     }
 
     if (result.success > 0) {
-        await autoLinkProviderConfigs(CONFIG, { onlyCurrentCred: false });
+        broadcastEvent('oauth_batch_success', {
+            provider: OB1_PROVIDER,
+            count: result.success,
+            timestamp: new Date().toISOString(),
+        });
     }
 
     return result;
@@ -524,9 +543,11 @@ export async function importOb1CredentialsFromHome() {
     }
 
     const credPath = await saveOb1Credentials(credentials);
+    const relativePath = path.relative(process.cwd(), credPath);
+    await linkOb1CredentialToProviderPool(relativePath);
     return {
         success: true,
-        path: path.relative(process.cwd(), credPath),
+        path: relativePath,
         email: credentials.email || '',
     };
 }

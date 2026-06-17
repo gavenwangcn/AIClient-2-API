@@ -38,6 +38,8 @@ export async function autoLinkProviderConfigs(config, options = {}) {
     const allNewProviders = {};
     /** @type {{ provider: object; displayName: string; providerType: string } | null} */
     let singleLinkResult = null;
+    /** @type {Array<{ providerType: string; displayName: string; providers: object[] }>} */
+    const batchLinkResults = [];
 
     // 如果只关联当前凭证
     if (options.onlyCurrentCred && options.credPath) {
@@ -51,7 +53,7 @@ export async function autoLinkProviderConfigs(config, options = {}) {
         // 遍历所有提供商映射
         for (const mapping of PROVIDER_MAPPINGS) {
             const configsPath = path.join(process.cwd(), 'configs', mapping.dirName);
-            const { providerType, credPathKey, defaultCheckModel, displayName, needsProjectId } = mapping;
+            const { providerType, credPathKey, defaultCheckModel, displayName, needsProjectId, urlKeys } = mapping;
             
             // 确保提供商类型数组存在
             if (!config.providerPools[providerType]) {
@@ -77,14 +79,31 @@ export async function autoLinkProviderConfigs(config, options = {}) {
             await scanProviderDirectory(configsPath, linkedPaths, newProviders, {
                 credPathKey,
                 defaultCheckModel,
-                needsProjectId
+                needsProjectId,
+                urlKeys,
+                dirName: mapping.dirName,
             });
+
+            // OB-1 早期 OAuth 曾误存到项目根 ob1/，补扫并关联
+            if (mapping.dirName === 'ob1') {
+                const legacyOb1Path = path.join(process.cwd(), 'ob1');
+                if (legacyOb1Path !== configsPath && fs.existsSync(legacyOb1Path)) {
+                    await scanProviderDirectory(legacyOb1Path, linkedPaths, newProviders, {
+                        credPathKey,
+                        defaultCheckModel,
+                        needsProjectId,
+                        urlKeys,
+                        dirName: mapping.dirName,
+                    });
+                }
+            }
             
             // 如果有新的配置文件需要关联
             if (newProviders.length > 0) {
                 config.providerPools[providerType].push(...newProviders);
                 totalNewProviders += newProviders.length;
                 allNewProviders[displayName] = newProviders;
+                batchLinkResults.push({ providerType, displayName, providers: newProviders });
             }
         }
     }
@@ -124,6 +143,23 @@ export async function autoLinkProviderConfigs(config, options = {}) {
                     providerType: singleLinkResult.providerType,
                     timestamp: new Date().toISOString(),
                 });
+            } else {
+                for (const batchResult of batchLinkResults) {
+                    for (const providerConfig of batchResult.providers) {
+                        broadcastEvent('provider_update', {
+                            action: 'add',
+                            providerType: batchResult.providerType,
+                            providerConfig,
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
+                    broadcastEvent('config_update', {
+                        action: 'auto_link',
+                        filePath,
+                        providerType: batchResult.providerType,
+                        timestamp: new Date().toISOString(),
+                    });
+                }
             }
         } catch (error) {
             logger.error(`[Auto-Link] Failed to save provider_pools.json: ${error.message}`);
@@ -174,6 +210,15 @@ async function linkSingleCredential(config, credPath) {
                 matchedMapping = mapping;
                 break;
             }
+            // OB-1 早期误存到项目根 ob1/
+            if (mapping.dirName === 'ob1') {
+                const legacyOb1Path = path.join(process.cwd(), 'ob1');
+                const relLegacy = path.relative(path.normalize(legacyOb1Path), path.normalize(absolutePath));
+                if (relLegacy && !relLegacy.startsWith('..') && !path.isAbsolute(relLegacy)) {
+                    matchedMapping = mapping;
+                    break;
+                }
+            }
         }
         
         if (!matchedMapping) {
@@ -181,7 +226,7 @@ async function linkSingleCredential(config, credPath) {
             return null;
         }
         
-        const { providerType, credPathKey, defaultCheckModel, displayName, needsProjectId } = matchedMapping;
+        const { providerType, credPathKey, defaultCheckModel, displayName, needsProjectId, urlKeys } = matchedMapping;
         
         // 确保提供商类型数组存在
         if (!config.providerPools[providerType]) {
@@ -209,8 +254,20 @@ async function linkSingleCredential(config, credPath) {
             credPathKey,
             credPath: formatSystemPath(relativePath),
             defaultCheckModel,
-            needsProjectId
+            needsProjectId,
+            urlKeys,
         });
+
+        if (matchedMapping.dirName === 'ob1') {
+            try {
+                const credContent = JSON.parse(fs.readFileSync(absolutePath, 'utf8'));
+                if (credContent.email) {
+                    newProvider.customName = credContent.email;
+                }
+            } catch {
+                // ignore invalid credential json
+            }
+        }
         
         // 添加到配置
         config.providerPools[providerType].push(newProvider);
@@ -239,7 +296,7 @@ async function linkSingleCredential(config, credPath) {
  * @param {boolean} options.needsProjectId - 是否需要 PROJECT_ID
  */
 async function scanProviderDirectory(dirPath, linkedPaths, newProviders, options) {
-    const { credPathKey, defaultCheckModel, needsProjectId } = options;
+    const { credPathKey, defaultCheckModel, needsProjectId, urlKeys, dirName } = options;
     
     try {
         const files = await pfs.readdir(dirPath, { withFileTypes: true });
@@ -258,14 +315,25 @@ async function scanProviderDirectory(dirPath, linkedPaths, newProviders, options
                     const isLinked = isPathUsed(relativePath, fileName, linkedPaths);
                     
                     if (!isLinked) {
-                        // 使用公共方法创建新的提供商配置
                         const newProvider = createProviderConfig({
                             credPathKey,
                             credPath: formatSystemPath(relativePath),
                             defaultCheckModel,
-                            needsProjectId
+                            needsProjectId,
+                            urlKeys,
                         });
-                        
+
+                        if (dirName === 'ob1') {
+                            try {
+                                const credContent = JSON.parse(fs.readFileSync(fullPath, 'utf8'));
+                                if (credContent.email) {
+                                    newProvider.customName = credContent.email;
+                                }
+                            } catch {
+                                // ignore invalid credential json
+                            }
+                        }
+
                         newProviders.push(newProvider);
                     }
                 }

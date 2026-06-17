@@ -49,6 +49,12 @@ function sanitizeCredentialFilenamePart(value) {
     return sanitized || 'default';
 }
 
+function resolveOb1CredentialPath(credsPath) {
+    if (!credsPath) return credsPath;
+    if (path.isAbsolute(credsPath)) return credsPath;
+    return path.resolve(process.cwd(), credsPath.replace(/^\.[\\/]/, ''));
+}
+
 function normalizeOb1BaseUrl(baseUrl) {
     const value = String(baseUrl || OB1_DEFAULT_API_BASE).trim().replace(/\/+$/, '');
     return value || OB1_DEFAULT_API_BASE;
@@ -282,7 +288,7 @@ export class Ob1ApiService {
         const email = this.config.OB1_EMAIL || 'default';
 
         try {
-            let credsPath = this.config.OB1_OAUTH_CREDS_FILE_PATH;
+            let credsPath = resolveOb1CredentialPath(this.config.OB1_OAUTH_CREDS_FILE_PATH);
             let rawCreds;
 
             if (credsPath) {
