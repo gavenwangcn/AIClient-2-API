@@ -1476,11 +1476,21 @@ user@example.com,mypass,Fe26.xxx...,rt_xxx...
         }
 
         try {
+            importBtn.disabled = true;
+            progressEl.style.display = 'block';
+            progressEl.textContent = t('oauth.ob1.importing');
+
             const response = await fetch('/api/ob1/batch-import-tokens', {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: window.apiClient ? window.apiClient.getAuthHeaders() : {
+                    'Content-Type': 'application/json'
+                },
                 body: JSON.stringify({ payload: raw })
             });
+
+            if (!response.ok) {
+                throw new Error(`HTTP error! status: ${response.status}`);
+            }
 
             const reader = response.body.getReader();
             const decoder = new TextDecoder();
