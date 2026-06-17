@@ -14,6 +14,7 @@ const recommendedModelMap = {
     'atlascloud': 'gpt-4o',
     'openai-qwen-oauth': 'qwen3-coder-plus',
     'openai-iflow': 'qwen3-max',
+    'openblocklabs-oauth': 'anthropic/claude-opus-4.6',
     'openai-codex-oauth': 'gpt-5',
     'grok-web': 'grok-4.1-mini',
     'openaiResponses-custom': 'gpt-4o',

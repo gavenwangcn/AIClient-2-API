@@ -759,7 +759,7 @@ async function openProviderManager(providerType, searchTerm = '') {
  * @returns {string} 授权按钮HTML
  */
 function generateAuthButton(providerType) {
-    const oauthProviders = ['gemini-cli-oauth', 'gemini-antigravity', 'openai-qwen-oauth', 'claude-kiro-oauth', 'openai-iflow', 'openai-codex-oauth', 'grok-cli-oauth', 'grok-web', 'consensus-mcp-oauth'];
+    const oauthProviders = ['gemini-cli-oauth', 'gemini-antigravity', 'openai-qwen-oauth', 'claude-kiro-oauth', 'openai-iflow', 'openai-codex-oauth', 'grok-cli-oauth', 'openblocklabs-oauth', 'grok-web', 'consensus-mcp-oauth'];
 
     if (!oauthProviders.includes(providerType)) {
         return '';
@@ -874,6 +874,11 @@ async function handleGenerateAuthUrl(providerType) {
 
     if (providerType === 'grok-cli-oauth') {
         showGrokCliAuthMethodSelector(providerType);
+        return;
+    }
+
+    if (providerType === 'openblocklabs-oauth') {
+        showOb1AuthMethodSelector(providerType);
         return;
     }
 
@@ -1340,6 +1345,195 @@ function showGrokCliAuthMethodSelector(providerType) {
                 await executeGenerateAuthUrl(providerType, {});
             }
         });
+    });
+}
+
+/**
+ * 显示 OpenBlockLabs OB-1 认证方式选择对话框
+ * @param {string} providerType - 提供商类型
+ */
+function showOb1AuthMethodSelector(providerType) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 500px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-cube"></i> <span>${t('oauth.ob1.selectMethod')}</span></h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="auth-method-options" style="display: flex; flex-direction: column; gap: 12px;">
+                    <button class="auth-method-btn" data-method="oauth" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-key" style="font-size: 24px; color: #6366f1;"></i>
+                        <div style="text-align: left;">
+                            <div style="font-weight: 600; color: #333;">${t('oauth.ob1.oauth')}</div>
+                            <div style="font-size: 12px; color: #666;">${t('oauth.ob1.oauthDesc')}</div>
+                        </div>
+                    </button>
+                    <button class="auth-method-btn" data-method="batch-import" style="display: flex; align-items: center; gap: 12px; padding: 16px; border: 2px solid #e0e0e0; border-radius: 8px; background: white; cursor: pointer; transition: all 0.2s;">
+                        <i class="fas fa-file-import" style="font-size: 24px; color: #6366f1;"></i>
+                        <div style="text-align: left;">
+                            <div style="font-weight: 600; color: #333;">${t('oauth.ob1.batchImport')}</div>
+                            <div style="font-size: 12px; color: #666;">${t('oauth.ob1.batchImportDesc')}</div>
+                        </div>
+                    </button>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-cancel">${t('modal.provider.cancel')}</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const cancelBtn = modal.querySelector('.modal-cancel');
+    [closeBtn, cancelBtn].forEach(btn => {
+        btn.addEventListener('click', () => modal.remove());
+    });
+
+    modal.querySelectorAll('.auth-method-btn').forEach(btn => {
+        btn.addEventListener('mouseenter', () => {
+            btn.style.borderColor = '#6366f1';
+            btn.style.background = '#eef2ff';
+        });
+        btn.addEventListener('mouseleave', () => {
+            btn.style.borderColor = '#e0e0e0';
+            btn.style.background = 'white';
+        });
+        btn.addEventListener('click', async () => {
+            const method = btn.dataset.method;
+            modal.remove();
+
+            if (method === 'batch-import') {
+                showOb1BatchImportModal(providerType);
+            } else {
+                await executeGenerateAuthUrl(providerType, {});
+            }
+        });
+    });
+}
+
+/**
+ * 显示 OB-1 Token 批量导入模态框
+ * @param {string} providerType - 提供商类型
+ */
+function showOb1BatchImportModal(providerType) {
+    const modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.style.display = 'flex';
+
+    modal.innerHTML = `
+        <div class="modal-content" style="max-width: 700px;">
+            <div class="modal-header">
+                <h3><i class="fas fa-file-import"></i> ${t('oauth.ob1.batchImport')} (${providerType})</h3>
+                <button class="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <p style="font-size: 13px; color: #666; margin-bottom: 12px;">${t('oauth.ob1.importInstructions')}</p>
+                <textarea id="ob1BatchTokensInput" rows="12" style="width: 100%; font-family: monospace; font-size: 12px;" placeholder="${t('oauth.ob1.tokensPlaceholder')}"></textarea>
+                <div id="ob1BatchImportProgress" style="margin-top: 12px; display: none;"></div>
+            </div>
+            <div class="modal-footer">
+                <button class="modal-cancel">${t('modal.provider.cancel')}</button>
+                <button class="modal-confirm" id="ob1BatchImportBtn">${t('oauth.ob1.startImport')}</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeBtn = modal.querySelector('.modal-close');
+    const cancelBtn = modal.querySelector('.modal-cancel');
+    const importBtn = modal.querySelector('#ob1BatchImportBtn');
+    const progressEl = modal.querySelector('#ob1BatchImportProgress');
+    const textarea = modal.querySelector('#ob1BatchTokensInput');
+
+    [closeBtn, cancelBtn].forEach(btn => {
+        btn.addEventListener('click', () => modal.remove());
+    });
+
+    importBtn.addEventListener('click', async () => {
+        const raw = textarea.value.trim();
+        if (!raw) {
+            showToast(t('common.error'), t('oauth.ob1.noTokens'), 'error');
+            return;
+        }
+
+        let tokens;
+        try {
+            const parsed = JSON.parse(raw);
+            if (Array.isArray(parsed)) {
+                tokens = parsed;
+            } else if (typeof parsed === 'object' && parsed !== null) {
+                tokens = [parsed];
+            } else {
+                tokens = raw.split('\n').map(line => line.trim()).filter(Boolean);
+            }
+        } catch {
+            tokens = raw.split('\n').map(line => line.trim()).filter(Boolean);
+        }
+
+        if (!tokens.length) {
+            showToast(t('common.error'), t('oauth.ob1.noTokens'), 'error');
+            return;
+        }
+
+        importBtn.disabled = true;
+        progressEl.style.display = 'block';
+        progressEl.textContent = t('oauth.ob1.importing');
+
+        try {
+            const response = await fetch('/api/ob1/batch-import-tokens', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ tokens })
+            });
+
+            const reader = response.body.getReader();
+            const decoder = new TextDecoder();
+            let buffer = '';
+
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                buffer += decoder.decode(value, { stream: true });
+                const parts = buffer.split('\n\n');
+                buffer = parts.pop() || '';
+
+                for (const part of parts) {
+                    const lines = part.split('\n');
+                    const eventLine = lines.find(line => line.startsWith('event: '));
+                    const dataLine = lines.find(line => line.startsWith('data: '));
+                    if (!eventLine || !dataLine) continue;
+
+                    const event = eventLine.slice(7).trim();
+                    const data = JSON.parse(dataLine.slice(6));
+
+                    if (event === 'progress') {
+                        progressEl.textContent = t('oauth.ob1.importingProgress', {
+                            current: data.index,
+                            total: data.total
+                        });
+                    } else if (event === 'complete') {
+                        const msg = data.failedCount > 0
+                            ? t('oauth.ob1.importPartial', { success: data.successCount, failed: data.failedCount })
+                            : t('oauth.ob1.importSuccess', { count: data.successCount });
+                        showToast(t('common.success'), msg, data.failedCount > 0 ? 'warning' : 'success');
+                        if (window.refreshProviderConfig) window.refreshProviderConfig(providerType);
+                        modal.remove();
+                    } else if (event === 'error') {
+                        throw new Error(data.error || t('oauth.ob1.importError'));
+                    }
+                }
+            }
+        } catch (error) {
+            showToast(t('common.error'), error.message || t('oauth.ob1.importError'), 'error');
+            importBtn.disabled = false;
+        }
     });
 }
 
@@ -3966,6 +4160,7 @@ function getAuthFilePath(provider) {
         'openai-qwen-oauth': '~/.qwen/oauth_creds.json',
         'claude-kiro-oauth': '~/.aws/sso/cache/kiro-auth-token.json',
         'openai-iflow': '~/.iflow/oauth_creds.json',
+        'openblocklabs-oauth': '~/.ob1/credentials.json',
         'consensus-mcp-oauth': 'configs/consensus/mcporter.json'
     };
     return authFilePaths[provider] || (getCurrentLanguage() === 'en-US' ? 'Unknown Path' : '未知路径');
@@ -3986,7 +4181,9 @@ function showAuthModal(authUrl, authInfo) {
     
     // 获取需要开放的端口号（从 authInfo 或当前页面 URL）
     const requiredPort = authInfo.callbackPort || authInfo.port || window.location.port || '3000';
-    const isDeviceFlow = authInfo.provider === 'openai-qwen-oauth' || (authInfo.provider === 'claude-kiro-oauth' && authInfo.authMethod === 'builder-id');
+    const isDeviceFlow = authInfo.provider === 'openai-qwen-oauth'
+        || authInfo.provider === 'openblocklabs-oauth'
+        || (authInfo.provider === 'claude-kiro-oauth' && authInfo.authMethod === 'builder-id');
 
     let instructionsHtml = '';
     if (authInfo.provider === 'openai-qwen-oauth') {
@@ -3998,6 +4195,18 @@ function showAuthModal(authUrl, authInfo) {
                     <li data-i18n="oauth.modal.step2.qwen">${t('oauth.modal.step2.qwen')}</li>
                     <li data-i18n="oauth.modal.step3">${t('oauth.modal.step3')}</li>
                     <li data-i18n="oauth.modal.step4.qwen" data-i18n-params='{"min":"${Math.floor(authInfo.expiresIn / 60)}"}'>${t('oauth.modal.step4.qwen', { min: Math.floor(authInfo.expiresIn / 60) })}</li>
+                </ol>
+            </div>
+        `;
+    } else if (authInfo.provider === 'openblocklabs-oauth') {
+        instructionsHtml = `
+            <div class="auth-instructions">
+                <h4 data-i18n="oauth.modal.steps">${t('oauth.modal.steps')}</h4>
+                <ol>
+                    <li data-i18n="oauth.ob1.step1">${t('oauth.ob1.step1')}</li>
+                    <li data-i18n="oauth.ob1.step2">${t('oauth.ob1.step2')}</li>
+                    <li data-i18n="oauth.ob1.step3">${t('oauth.ob1.step3')}</li>
+                    <li data-i18n="oauth.ob1.step4" data-i18n-params='{"min":"${Math.floor((authInfo.expiresIn || 600) / 60)}"}'>${t('oauth.ob1.step4', { min: Math.floor((authInfo.expiresIn || 600) / 60) })}</li>
                 </ol>
             </div>
         `;

@@ -60,7 +60,8 @@ class FileUploadHandler {
             'openai-qwen-oauth': 'qwen',
             'openai-iflow': 'iflow',
             'openai-codex-oauth': 'codex',
-            'consensus-mcp-oauth': 'consensus'
+            'consensus-mcp-oauth': 'consensus',
+            'openblocklabs-oauth': 'ob1'
         };
         return providerMap[provider] || 'gemini';
     }

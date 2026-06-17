@@ -1124,6 +1124,12 @@ function detectProviderFromPath(filePath) {
             shortName: 'grok-cli-oauth'
         },
         {
+            patterns: ['configs/ob1/', '/ob1/', '/.ob1/'],
+            providerType: 'openblocklabs-oauth',
+            displayName: 'OpenBlockLabs OB-1',
+            shortName: 'openblocklabs-oauth'
+        },
+        {
             patterns: ['configs/iflow/', '/iflow/'],
             providerType: 'openai-iflow',
             displayName: 'OpenAI iFlow OAuth',

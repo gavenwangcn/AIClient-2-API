@@ -258,6 +258,17 @@ function getAvailableRoutes() {
             badgeClass: 'oauth'
         },
         {
+            provider: 'openblocklabs-oauth',
+            name: t('dashboard.routing.nodeName.openblocklabs'),
+            paths: {
+                openai: '/openblocklabs-oauth/v1/chat/completions',
+                claude: '/openblocklabs-oauth/v1/messages'
+            },
+            description: t('dashboard.routing.oauth'),
+            badge: t('dashboard.routing.oauth'),
+            badgeClass: 'oauth'
+        },
+        {
             provider: 'openaiResponses-custom',
             name: t('dashboard.routing.nodeName.responses'),
             paths: {
@@ -376,6 +387,7 @@ async function copyCurlExample(provider, options = {}) {
         case 'openai-custom':
         case 'openai-qwen-oauth':
         case 'openai-iflow':
+        case 'openblocklabs-oauth':
         case 'openai-codex-oauth':
         case 'forward-api':
             if (protocol === 'openai') {
@@ -520,6 +532,7 @@ function renderRoutingExamples(providerConfigs) {
         'openai-codex-oauth': 'fa-keyboard',
         'consensus-mcp-oauth': 'fa-book',
         'grok-cli-oauth': 'fa-terminal',
+        'openblocklabs-oauth': 'fa-cube',
         'grok-web': 'fa-search'
     };
 
@@ -536,6 +549,7 @@ function renderRoutingExamples(providerConfigs) {
         'openai-codex-oauth': 'gpt-5',
         'consensus-mcp-oauth': 'consensus-paper-search',
         'grok-cli-oauth': 'grok-3-mini',
+        'openblocklabs-oauth': 'anthropic/claude-opus-4.6',
         'grok-web': 'grok-4.1-mini',
         'openaiResponses-custom': 'gpt-4o'
     };

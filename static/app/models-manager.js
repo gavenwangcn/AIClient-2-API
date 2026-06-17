@@ -194,6 +194,7 @@ function getProviderDisplayName(providerType) {
         'openai-codex-oauth': 'OpenAI Codex (OAuth)',
         'consensus-mcp-oauth': 'Consensus MCP',
         'grok-cli-oauth': 'Grok CLI (OAuth)',
+        'openblocklabs-oauth': 'OpenBlockLabs OB-1',
         'grok-web': 'Grok Web'
     };
 

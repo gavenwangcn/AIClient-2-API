@@ -48,6 +48,12 @@ function getBaseProviderConfigs() {
             icon: 'fa-terminal',
             defaultPath: 'configs/grok-cli/'
         },
+        {
+            id: 'openblocklabs-oauth',
+            name: t('dashboard.routing.nodeName.openblocklabs'),
+            icon: 'fa-cube',
+            defaultPath: 'configs/ob1/'
+        },
         { 
             id: 'consensus-mcp-oauth', 
             name: 'Consensus MCP', 
@@ -228,6 +234,7 @@ function getFieldLabel(key) {
         'IFLOW_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
         'CODEX_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
         'GROK_CLI_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
+        'OB1_OAUTH_CREDS_FILE_PATH': t('modal.provider.field.oauthPath'),
         'GROK_COOKIE_TOKEN': t('modal.provider.field.ssoToken'),
         'GROK_CF_CLEARANCE': t('modal.provider.field.cfClearance'),
         'GROK_CF_BM': t('modal.provider.field.cfBm'),
@@ -250,6 +257,10 @@ function getFieldLabel(key) {
         'CONSENSUS_MCPORTER_TOKEN_CACHE_DISABLE': '禁用 tokenCacheDir（仅用 ~/.mcporter/credentials.json）',
         'CONSENSUS_MCPORTER_POST_OAUTH_VERIFY': '设为 0 跳过 OAuth 成功后 mcporter list 自检',
         'GROK_BASE_URL': t('modal.provider.field.grokBaseUrl'),
+        'OB1_API_BASE': 'OB-1 API Base URL',
+        'OB1_EMAIL': t('modal.provider.field.email'),
+        'OB1_WORKOS_AUTH_URL': 'WorkOS Auth URL',
+        'OB1_WORKOS_CLIENT_ID': 'WorkOS Client ID',
         'FORWARD_API_KEY': 'Forward API Key',
         'FORWARD_BASE_URL': 'Forward Base URL',
         'FORWARD_HEADER_NAME': t('modal.provider.field.headerName'),
@@ -488,6 +499,26 @@ function getProviderTypeFields(providerType) {
                 label: `xAI Base URL <span class="optional-tag">${t('config.optional')}</span>`,
                 type: 'text',
                 placeholder: 'https://api.x.ai/v1'
+            }
+        ],
+        'openblocklabs-oauth': [
+            {
+                id: 'OB1_OAUTH_CREDS_FILE_PATH',
+                label: t('modal.provider.field.oauthPath'),
+                type: 'text',
+                placeholder: 'configs/ob1/ob1-user@example.com-....json'
+            },
+            {
+                id: 'OB1_EMAIL',
+                label: `${t('modal.provider.field.email')} <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'email',
+                placeholder: t('modal.provider.field.email.placeholder')
+            },
+            {
+                id: 'OB1_API_BASE',
+                label: `OB-1 API Base URL <span class="optional-tag">${t('config.optional')}</span>`,
+                type: 'text',
+                placeholder: 'https://dashboard.openblocklabs.com/api/v1'
             }
         ],
         'grok-web': [

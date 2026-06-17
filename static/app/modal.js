@@ -1276,6 +1276,8 @@ function getFieldOrder(provider) {
             providerType = 'consensus-mcp-oauth';
         } else if (provider.GROK_CLI_OAUTH_CREDS_FILE_PATH) {
             providerType = 'grok-cli-oauth';
+        } else if (provider.OB1_OAUTH_CREDS_FILE_PATH) {
+            providerType = 'openblocklabs-oauth';
         } else if (provider.GROK_COOKIE_TOKEN) {
             providerType = 'grok-web';
         } else if (provider.FORWARD_API_KEY) {
