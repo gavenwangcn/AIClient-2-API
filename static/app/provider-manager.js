@@ -1434,6 +1434,18 @@ function showOb1BatchImportModal(providerType) {
             </div>
             <div class="modal-body">
                 <p style="font-size: 13px; color: #666; margin-bottom: 12px;">${t('oauth.ob1.importInstructions')}</p>
+                <details style="margin-bottom: 12px; font-size: 12px; color: #555;">
+                    <summary style="cursor: pointer; color: #2563eb;">CSV / JSON 示例</summary>
+                    <pre style="margin-top: 8px; padding: 10px; background: #f8fafc; border-radius: 6px; overflow-x: auto; font-size: 11px;">email,password,access_token,refresh_token
+user@example.com,mypass,Fe26.xxx...,rt_xxx...
+
+{
+  "email": "user@example.com",
+  "access_token": "...",
+  "refresh_token": "",
+  "expires_at": 0
+}</pre>
+                </details>
                 <textarea id="ob1BatchTokensInput" rows="12" style="width: 100%; font-family: monospace; font-size: 12px;" placeholder="${t('oauth.ob1.tokensPlaceholder')}"></textarea>
                 <div id="ob1BatchImportProgress" style="margin-top: 12px; display: none;"></div>
             </div>
@@ -1463,34 +1475,11 @@ function showOb1BatchImportModal(providerType) {
             return;
         }
 
-        let tokens;
-        try {
-            const parsed = JSON.parse(raw);
-            if (Array.isArray(parsed)) {
-                tokens = parsed;
-            } else if (typeof parsed === 'object' && parsed !== null) {
-                tokens = [parsed];
-            } else {
-                tokens = raw.split('\n').map(line => line.trim()).filter(Boolean);
-            }
-        } catch {
-            tokens = raw.split('\n').map(line => line.trim()).filter(Boolean);
-        }
-
-        if (!tokens.length) {
-            showToast(t('common.error'), t('oauth.ob1.noTokens'), 'error');
-            return;
-        }
-
-        importBtn.disabled = true;
-        progressEl.style.display = 'block';
-        progressEl.textContent = t('oauth.ob1.importing');
-
         try {
             const response = await fetch('/api/ob1/batch-import-tokens', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ tokens })
+                body: JSON.stringify({ payload: raw })
             });
 
             const reader = response.body.getReader();
