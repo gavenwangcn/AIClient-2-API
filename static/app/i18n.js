@@ -884,6 +884,12 @@ const translations = {
         'usage.time.hours': '{hours}小时{minutes}分',
         'usage.time.minutes': '{minutes}分钟',
         'usage.time.soon': '即将',
+        'usage.codex.resetCredits': '{count} 次',
+        'usage.codex.resetAction': '重置额度',
+        'usage.codex.resetActionShort': '重置',
+        'usage.codex.resetting': '正在重置 {name} 的 Codex 额度...',
+        'usage.codex.resetSuccess': 'Codex 额度重置成功',
+        'usage.codex.resetConfirm': '确定要重置 {name} 的 Codex 额度吗？这会消耗 1 次可重置次数。',
         
         // Logs
         'logs.title': '实时日志',
@@ -2117,6 +2123,12 @@ const translations = {
         'usage.time.hours': '{hours}h {minutes}m',
         'usage.time.minutes': '{minutes}m',
         'usage.time.soon': 'Soon',
+        'usage.codex.resetCredits': '{count} left',
+        'usage.codex.resetAction': 'Reset quota',
+        'usage.codex.resetActionShort': 'Reset',
+        'usage.codex.resetting': 'Resetting Codex quota for {name}...',
+        'usage.codex.resetSuccess': 'Codex quota reset succeeded',
+        'usage.codex.resetConfirm': 'Reset Codex quota for {name}? This will consume 1 reset credit.',
         
         // Logs
         'logs.title': 'Real-time Logs',

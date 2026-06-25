@@ -356,6 +356,23 @@ export class CodexApiService {
     }
 
     /**
+     * 构建 Codex 管理类接口请求头
+     */
+    buildManagementHeaders() {
+        return {
+            'authorization': `Bearer ${this.accessToken}`,
+            'chatgpt-account-id': this.accountId,
+            'oai-language': 'zh-CN',
+            'originator': 'Codex Desktop',
+            'accept': 'application/json',
+            'sec-fetch-site': 'none',
+            'sec-fetch-mode': 'no-cors',
+            'sec-fetch-dest': 'empty',
+            'priority': 'u=4, i'
+        };
+    }
+
+    /**
      * 准备请求体
      */
     async prepareRequestBody(model, requestBody, stream) {
@@ -945,14 +962,7 @@ export class CodexApiService {
 
         try {
             const url = 'https://chatgpt.com/backend-api/wham/usage';
-            const headers = {
-                'user-agent': `codex-tui/${CODEX_VERSION} (Windows 10.0.26100; x86_64) WindowsTerminal (codex-tui; ${CODEX_VERSION})`,
-                'authorization': `Bearer ${this.accessToken}`,
-                'chatgpt-account-id': this.accountId,
-                'accept': '*/*',
-                'host': 'chatgpt.com',
-                'Connection': 'close'
-            };
+            const headers = this.buildManagementHeaders();
 
             const config = {
                 headers,
@@ -981,6 +991,57 @@ export class CodexApiService {
             }
 
             logger.error('[Codex] Failed to get usage limits:', error.message);
+            throw error;
+        }
+    }
+
+    /**
+     * 消耗一次 Codex 额度重置次数
+     * @returns {Promise<Object>} 重置结果与最新用量
+     */
+    async resetUsageQuota() {
+        if (!this.isInitialized) {
+            await this.initialize();
+        }
+
+        try {
+            const url = 'https://chatgpt.com/backend-api/wham/rate-limit-reset-credits/consume';
+            const headers = {
+                ...this.buildManagementHeaders(),
+                'content-type': 'application/json'
+            };
+            const body = {
+                redeem_request_id: crypto.randomUUID()
+            };
+
+            const axiosRequestConfig = {
+                method: 'post',
+                url,
+                data: body,
+                headers,
+                timeout: 30000
+            };
+            this._applySidecar(axiosRequestConfig);
+
+            const response = await axios.request(axiosRequestConfig);
+            const latestUsage = await this.getUsageLimits();
+
+            return {
+                success: true,
+                resetResult: response.data,
+                usage: latestUsage,
+                account: this.email
+            };
+        } catch (error) {
+            if (error.response?.status === 401) {
+                logger.info('[Codex] Received 401 during resetUsageQuota. Triggering background refresh...');
+                this.triggerBackgroundRefresh();
+                error.credentialMarkedUnhealthy = true;
+                error.shouldSwitchCredential = true;
+                error.skipErrorCount = true;
+            }
+
+            logger.error('[Codex] Failed to reset usage quota:', error.message);
             throw error;
         }
     }

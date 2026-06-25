@@ -709,6 +709,8 @@ export function formatCodexUsage(usageData) {
     const rateLimit = usageData.rate_limit || usageData.rateLimit;
     const primary = rateLimit?.primary_window || rateLimit?.primaryWindow;
     const secondary = rateLimit?.secondary_window || rateLimit?.secondaryWindow;
+    const resetCredits = usageData.rate_limit_reset_credits || usageData.rateLimitResetCredits;
+    const resetAvailableCount = Number(resetCredits?.available_count ?? resetCredits?.availableCount ?? 0) || 0;
     
     const primaryUsedPercent = primary?.used_percent ?? primary?.usedPercent ?? 0;
     const secondaryUsedPercent = secondary?.used_percent ?? secondary?.usedPercent ?? 0;
@@ -763,7 +765,8 @@ export function formatCodexUsage(usageData) {
             resetAt: formatTimestamp(worstResetAtTimestamp),
             plan,
             planClass: getPlanClass(plan),
-            unit: 'percent'
+            unit: 'percent',
+            resetAvailableCount
         },
         user: { 
             email: usageData.account || null

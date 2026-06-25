@@ -333,6 +333,14 @@ export async function handleUIApiRequests(method, pathParam, req, res, currentCo
         return await usageApi.handleGetUsage(req, res, currentConfig, providerPoolManager);
     }
 
+    // Reset usage quota for a specific provider instance
+    const usageResetInstanceMatch = pathParam.match(/^\/api\/usage\/([^\/]+)\/([^\/]+)\/reset$/);
+    if (method === 'POST' && usageResetInstanceMatch) {
+        const providerType = decodeURIComponent(usageResetInstanceMatch[1]);
+        const providerUuid = decodeURIComponent(usageResetInstanceMatch[2]);
+        return await usageApi.handleResetSingleInstanceUsage(req, res, currentConfig, providerPoolManager, providerType, providerUuid);
+    }
+
     // Get supported providers for usage query
     if (method === 'GET' && pathParam === '/api/usage/supported-providers') {
         return await usageApi.handleGetSupportedProviders(req, res);

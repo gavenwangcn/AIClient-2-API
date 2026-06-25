@@ -174,6 +174,48 @@ export async function refreshSingleInstanceUsage(providerType, uuid, displayName
     }
 }
 
+async function resetSingleInstanceUsage(providerType, uuid, displayName, buttonEl) {
+    const confirmed = window.confirm(t('usage.codex.resetConfirm', { name: displayName }));
+    if (!confirmed) {
+        return;
+    }
+
+    const originalDisabled = buttonEl?.disabled;
+    if (buttonEl) {
+        buttonEl.disabled = true;
+    }
+
+    try {
+        showToast(t('common.info'), t('usage.codex.resetting', { name: displayName }), 'info');
+
+        const response = await fetch(`/api/usage/${providerType}/${uuid}/reset`, {
+            method: 'POST',
+            headers: getAuthHeaders()
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json().catch(() => ({}));
+            throw new Error(errorData.error?.message || `HTTP ${response.status}`);
+        }
+
+        const data = await response.json();
+        if (data?.instance?.uuid) {
+            updateSingleInstanceCard(providerType, data.instance);
+        } else {
+            await refreshSingleInstanceUsage(providerType, uuid, displayName);
+        }
+
+        showToast(t('common.success'), t('usage.codex.resetSuccess'), 'success');
+    } catch (error) {
+        console.error('重置单个实例用量失败:', error);
+        showToast(t('common.error'), error.message || t('common.requestFailed'), 'error');
+    } finally {
+        if (buttonEl) {
+            buttonEl.disabled = originalDisabled || false;
+        }
+    }
+}
+
 /**
  * 更新单个实例卡片 (局部更新 DOM)
  */
@@ -367,6 +409,11 @@ function createInstanceUsageCard(instance, providerType) {
     const summary = usage.summary || { usedPercent: 0, status: 'normal' };
     const user = usage.user || {};
     const displayName = user.email || instance.name || instance.uuid;
+    const providerDisplayName = getProviderDisplayName(providerType);
+    const isCodexProvider = providerType === 'openai-codex-oauth';
+    const resetAvailableCount = summary.resetAvailableCount ?? 0;
+    const canResetCodexQuota = isCodexProvider && instance.success;
+    const codexResetButtonLabel = `${t('usage.codex.resetActionShort')} ${t('usage.codex.resetCredits', { count: resetAvailableCount })}`;
 
     // 使用后端返回的 planClass，如果缺失则兜底
     const planClass = summary.planClass || 'plan-default';
@@ -394,8 +441,9 @@ function createInstanceUsageCard(instance, providerType) {
         <div class="usage-card-expanded-content">
             <div class="usage-instance-header">
                 <div class="instance-header-top">
-                    <div class="instance-provider-type"><i class="${getProviderIcon(providerType)}"></i><span>${getProviderDisplayName(providerType)}</span></div>
+                    <div class="instance-provider-type" title="${providerDisplayName}"><i class="${getProviderIcon(providerType)}"></i><span>${providerDisplayName}</span></div>
                     <div class="instance-status-badges">
+                        ${canResetCodexQuota ? `<button class="btn-reset-usage btn-reset-usage-inline" title="${t('usage.codex.resetAction')}" data-tooltip="${codexResetButtonLabel}" ${resetAvailableCount > 0 ? '' : 'disabled'}><i class="fas fa-rotate-left"></i></button>` : ''}
                         ${instance.configFilePath ? `<button class="btn-download-config" title="${t('usage.card.downloadConfig')}"><i class="fas fa-download"></i></button>` : ''}
                         <button class="btn-refresh-usage" title="${t('usage.card.refresh')}"><i class="fas fa-sync-alt"></i></button>
                         ${instance.isDisabled ? `<span class="badge badge-disabled">${t('usage.card.status.disabled')}</span>` : `<span class="badge ${instance.isHealthy ? 'badge-healthy' : 'badge-unhealthy'}">${t(instance.isHealthy ? 'usage.card.status.healthy' : 'usage.card.status.unhealthy')}</span>`}
@@ -420,6 +468,14 @@ function createInstanceUsageCard(instance, providerType) {
         e.stopPropagation(); 
         refreshSingleInstanceUsage(providerType, instance.uuid, displayName); 
     };
+
+    const resetBtn = card.querySelector('.btn-reset-usage');
+    if (resetBtn) {
+        resetBtn.onclick = (e) => {
+            e.stopPropagation();
+            resetSingleInstanceUsage(providerType, instance.uuid, displayName, resetBtn);
+        };
+    }
 
     const contentArea = card.querySelector('.usage-instance-content');
     if (instance.error) {
@@ -486,7 +542,7 @@ function renderUsageDetails(usage) {
 function getProviderDisplayName(type) {
     if (currentProviderConfigs) {
         const config = currentProviderConfigs.find(c => c.id === type);
-        if (config?.name) return config.name;
+        if (config?.name) return getCompactProviderDisplayName(type, config.name);
     }
     const names = {
         'forward-api': 'NewAPI / Forward',
@@ -504,7 +560,18 @@ function getProviderDisplayName(type) {
         'claude-custom': 'Claude Custom',
         'openaiResponses-custom': 'OpenAI Responses',
     };
-    return names[type] || type;
+    return getCompactProviderDisplayName(type, names[type] || type);
+}
+
+function getCompactProviderDisplayName(type, label) {
+    if (type === 'openai-codex-oauth') return 'Codex';
+    if (type === 'claude-kiro-oauth') return 'Kiro';
+    if (type === 'gemini-antigravity') return 'Antigravity';
+    if (type === 'gemini-cli-oauth') return 'Gemini CLI';
+    if (type === 'grok-cli-oauth') return 'Grok CLI';
+    if (type === 'grok-web') return 'Grok Web';
+    if (type === 'consensus-mcp-oauth') return 'Consensus MCP';
+    return label;
 }
 
 function getProviderIcon(type) {
